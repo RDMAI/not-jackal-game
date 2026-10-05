@@ -1,173 +1,28 @@
-<h1>static page test</h1>
-<style>
-  #grid { border-collapse: collapse; }
-  #grid td {
-    width: 40px;
-    height: 40px;
-    background-color: green;
-    border: 1px solid #333;
-    cursor: pointer;
-  }
-  #grid td.blue { background-color: blue; }
-</style>
-<div>
-  <input id="roomIdInput" placeholder="Enter room id" />
-  <button id="joinBtn">Submit</button>
-  <p id="roomError" style="color: red"></p>
-</div>
-<table id="grid" style="display: none"></table>
-<button id="sendBtn" style="display: none">Send board to database</button>
-<p id="status" style="display: none"></p>
-<textarea id="changes" rows="6" cols="50" readonly placeholder="Board changes will appear here..." style="display: none"></textarea>
-
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
-  import { getDatabase, ref, set, get, onValue } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
-
-  const firebaseConfig = {
-    apiKey: "AIzaSyARAjRjKBpRP9h1hIccJ_n1iqbON-vaHgs",
-    authDomain: "family-board-games-54639.firebaseapp.com",
-    projectId: "family-board-games-54639",
-    storageBucket: "family-board-games-54639.firebasestorage.app",
-    messagingSenderId: "557276950036",
-    appId: "1:557276950036:web:edac4d1cafc69480970101",
-    databaseURL: "https://family-board-games-54639-default-rtdb.europe-west1.firebasedatabase.app/"
-  };
-
-  const app = initializeApp(firebaseConfig);
-  const db = getDatabase(app);
-
-  // 0 = green, 1 = blue
-  let gridState = [];
-  let cells = [];
-  let currentRoomId = null;
-  let unsubscribe = null;
-
-  const table = document.getElementById('grid');
-  const sendBtn = document.getElementById('sendBtn');
-  const statusEl = document.getElementById('status');
-  const changesField = document.getElementById('changes');
-  const roomError = document.getElementById('roomError');
-
-  function buildBoard(rows, cols, initial) {
-    table.innerHTML = '';
-    cells = [];
-    gridState = Array.from({ length: rows }, (_, r) =>
-      Array.from({ length: cols }, (_, c) => initial?.[r]?.[c] ?? 0)
-    );
-    for (let r = 0; r < rows; r++) {
-      const tr = document.createElement('tr');
-      const rowCells = [];
-      for (let c = 0; c < cols; c++) {
-        const td = document.createElement('td');
-        if (gridState[r][c] === 1) td.classList.add('blue');
-        td.addEventListener('click', () => {
-          gridState[r][c] = gridState[r][c] === 0 ? 1 : 0;
-          td.classList.toggle('blue', gridState[r][c] === 1);
-        });
-        tr.appendChild(td);
-        rowCells.push(td);
-      }
-      table.appendChild(tr);
-      cells.push(rowCells);
-    }
-  }
-
-  function renderBoard() {
-    for (let r = 0; r < gridState.length; r++) {
-      for (let c = 0; c < gridState[r].length; c++) {
-        cells[r][c].classList.toggle('blue', gridState[r][c] === 1);
-      }
-    }
-  }
-
-  function setBoardVisible(visible) {
-    const display = visible ? '' : 'none';
-    table.style.display = display;
-    sendBtn.style.display = display;
-    statusEl.style.display = display;
-    changesField.style.display = display;
-  }
-
-  function subscribeToRoom(roomId) {
-    if (unsubscribe) {
-      unsubscribe();
-      unsubscribe = null;
-    }
-    const boardRef = ref(db, `rooms/${roomId}/board_state`);
-    unsubscribe = onValue(boardRef, (snapshot) => {
-      const remote = snapshot.val();
-      if (!remote) return;
-
-      const diffs = [];
-      for (let r = 0; r < remote.length; r++) {
-        for (let c = 0; c < (remote[r]?.length ?? 0); c++) {
-          const localVal = gridState[r]?.[c] ?? 0;
-          const remoteVal = remote[r]?.[c] ?? 0;
-          if (localVal !== remoteVal) {
-            diffs.push(`[${r},${c}]: ${localVal} -> ${remoteVal}`);
-          }
-        }
-      }
-
-      if (diffs.length > 0) {
-        changesField.value += (changesField.value ? '\n' : '') + diffs.join('\n');
-        changesField.scrollTop = changesField.scrollHeight;
-      }
-
-      // Resize if remote size differs
-      if (remote.length !== gridState.length || remote[0]?.length !== gridState[0]?.length) {
-        buildBoard(remote.length, remote[0].length, remote);
-      } else {
-        for (let r = 0; r < remote.length; r++) {
-          for (let c = 0; c < remote[r].length; c++) {
-            gridState[r][c] = remote[r][c] ?? 0;
-          }
-        }
-        renderBoard();
-      }
-    });
-  }
-
-  document.getElementById('joinBtn').addEventListener('click', async () => {
-    const roomId = document.getElementById('roomIdInput').value.trim();
-    if (!roomId) {
-      roomError.textContent = 'invalid id';
-      setBoardVisible(false);
-      return;
-    }
-    try {
-      const roomSnap = await get(ref(db, `rooms/${roomId}`));
-      if (!roomSnap.exists() || roomSnap.val()?.board_state == null) {
-        roomError.textContent = 'invalid id';
-        setBoardVisible(false);
-        return;
-      }
-      const room = roomSnap.val();
-      const sizeY = room.board_size_y ?? room.board_state.length;
-      const sizeX = room.board_size_x ?? room.board_state[0].length;
-      currentRoomId = roomId;
-      roomError.textContent = '';
-      changesField.value = '';
-      statusEl.textContent = '';
-      buildBoard(sizeY, sizeX, room.board_state);
-      setBoardVisible(true);
-      subscribeToRoom(roomId);
-    } catch (e) {
-      console.error(e);
-      roomError.textContent = 'invalid id';
-      setBoardVisible(false);
-    }
-  });
-
-  sendBtn.addEventListener('click', async () => {
-    if (!currentRoomId) return;
-    try {
-      await set(ref(db, `rooms/${currentRoomId}/board_state`), gridState);
-      statusEl.textContent = 'Board sent!';
-    } catch (e) {
-      console.error(e);
-      statusEl.textContent = 'Failed: ' + e.message;
-    }
-  });
-</script>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Not Jackal Game</title>
+  </head>
+  <body>
+    <h1>static page test</h1>
+    <div>
+      <input id="roomIdInput" placeholder="Enter room id" />
+      <button id="joinBtn">Submit</button>
+      <p id="roomError" style="color: red"></p>
+    </div>
+    <table id="grid" style="display: none"></table>
+    <button id="sendBtn" style="display: none">Send board to database</button>
+    <p id="status" style="display: none"></p>
+    <textarea
+      id="changes"
+      rows="6"
+      cols="50"
+      readonly
+      placeholder="Board changes will appear here..."
+      style="display: none"
+    ></textarea>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

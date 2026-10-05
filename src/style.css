@@ -1,0 +1,15 @@
+#grid {
+  border-collapse: collapse;
+}
+
+#grid td {
+  width: 40px;
+  height: 40px;
+  background-color: green;
+  border: 1px solid #333;
+  cursor: pointer;
+}
+
+#grid td.blue {
+  background-color: blue;
+}
