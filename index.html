@@ -1,1 +1,25 @@
 <h1>static page test</h1>
+<style>
+  #grid { border-collapse: collapse; }
+  #grid td {
+    width: 40px;
+    height: 40px;
+    background-color: green;
+    border: 1px solid #333;
+    cursor: pointer;
+  }
+  #grid td.blue { background-color: blue; }
+</style>
+<table id="grid"></table>
+<script>
+  const table = document.getElementById('grid');
+  for (let r = 0; r < 9; r++) {
+    const tr = document.createElement('tr');
+    for (let c = 0; c < 9; c++) {
+      const td = document.createElement('td');
+      td.addEventListener('click', () => td.classList.toggle('blue'));
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
+</script>
