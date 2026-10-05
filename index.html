@@ -11,15 +11,97 @@
   #grid td.blue { background-color: blue; }
 </style>
 <table id="grid"></table>
-<script>
+<button id="sendBtn">Send board to database</button>
+<p id="status"></p>
+<textarea id="changes" rows="6" cols="50" readonly placeholder="Board changes will appear here..."></textarea>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+  import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyARAjRjKBpRP9h1hIccJ_n1iqbON-vaHgs",
+    authDomain: "family-board-games-54639.firebaseapp.com",
+    projectId: "family-board-games-54639",
+    storageBucket: "family-board-games-54639.firebasestorage.app",
+    messagingSenderId: "557276950036",
+    appId: "1:557276950036:web:edac4d1cafc69480970101",
+    databaseURL: "https://family-board-games-54639-default-rtdb.europe-west1.firebasedatabase.app/"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+
+  // 0 = green, 1 = blue
+  const gridState = Array.from({ length: 9 }, () => Array(9).fill(0));
+
   const table = document.getElementById('grid');
+  const cells = [];
   for (let r = 0; r < 9; r++) {
     const tr = document.createElement('tr');
+    const rowCells = [];
     for (let c = 0; c < 9; c++) {
       const td = document.createElement('td');
-      td.addEventListener('click', () => td.classList.toggle('blue'));
+      td.addEventListener('click', () => {
+        gridState[r][c] = gridState[r][c] === 0 ? 1 : 0;
+        td.classList.toggle('blue', gridState[r][c] === 1);
+      });
       tr.appendChild(td);
+      rowCells.push(td);
     }
     table.appendChild(tr);
+    cells.push(rowCells);
   }
+
+  function renderBoard() {
+    for (let r = 0; r < 9; r++) {
+      for (let c = 0; c < 9; c++) {
+        cells[r][c].classList.toggle('blue', gridState[r][c] === 1);
+      }
+    }
+  }
+
+  const boardRef = ref(db, 'boardState');
+  const changesField = document.getElementById('changes');
+
+  onValue(boardRef, (snapshot) => {
+    const remote = snapshot.val();
+    if (!remote) return;
+
+    // Diff local gridState vs remote state
+    const diffs = [];
+    for (let r = 0; r < 9; r++) {
+      for (let c = 0; c < 9; c++) {
+        const localVal = gridState[r]?.[c] ?? 0;
+        const remoteVal = remote[r]?.[c] ?? 0;
+        if (localVal !== remoteVal) {
+          diffs.push(`[${r},${c}]: ${localVal} -> ${remoteVal}`);
+        }
+      }
+    }
+
+    if (diffs.length > 0) {
+      changesField.value += (changesField.value ? '\n' : '') + diffs.join('\n');
+      changesField.scrollTop = changesField.scrollHeight;
+    }
+
+    // Update local state to match database
+    for (let r = 0; r < 9; r++) {
+      for (let c = 0; c < 9; c++) {
+        gridState[r][c] = remote[r]?.[c] ?? 0;
+      }
+    }
+    renderBoard();
+  });
+
+  document.getElementById('sendBtn').addEventListener('click', async () => {
+    const status = document.getElementById('status');
+    try {
+      await set(ref(db, 'boardState'), gridState);
+      status.textContent = 'Board sent!';
+    } catch (e) {
+      console.error(e);
+      status.textContent = 'Failed: ' + e.message;
+    }
+  });
 </script>
