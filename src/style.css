@@ -1,15 +1,17 @@
-#grid {
-  border-collapse: collapse;
+body {
+  font-family: system-ui, sans-serif;
+  background: #0b1020;
+  color: #eee;
+  margin: 16px;
 }
 
-#grid td {
-  width: 40px;
-  height: 40px;
-  background-color: green;
-  border: 1px solid #333;
+button {
+  margin: 2px;
+  padding: 6px 10px;
   cursor: pointer;
 }
 
-#grid td.blue {
-  background-color: blue;
+#game canvas {
+  border: 1px solid #333;
+  margin-top: 12px;
 }

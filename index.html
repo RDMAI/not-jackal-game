@@ -6,23 +6,35 @@
     <title>Not Jackal Game</title>
   </head>
   <body>
-    <h1>static page test</h1>
-    <div>
+    <h1>Not Jackal (Jackal clone)</h1>
+    <p>Your id: <span id="myId"></span></p>
+    <div id="lobby">
       <input id="roomIdInput" placeholder="Enter room id" />
-      <button id="joinBtn">Submit</button>
+      <select id="maxPlayers">
+        <option value="2">2 players</option>
+        <option value="3">3 players</option>
+        <option value="4">4 players</option>
+      </select>
+      <button id="createBtn">Create</button>
+      <button id="joinBtn">Join</button>
+      <button id="startBtn">Start game</button>
       <p id="roomError" style="color: red"></p>
     </div>
-    <table id="grid" style="display: none"></table>
-    <button id="sendBtn" style="display: none">Send board to database</button>
-    <p id="status" style="display: none"></p>
-    <textarea
-      id="changes"
-      rows="6"
-      cols="50"
-      readonly
-      placeholder="Board changes will appear here..."
-      style="display: none"
-    ></textarea>
+    <div id="hud" style="display: none">
+      <p id="turnLabel"></p>
+      <p id="scores"></p>
+      <button id="grabBtn">Grab coin</button>
+      <button id="dropBtn">Drop / Deposit</button>
+      <button id="endTurnBtn">End turn</button>
+      <button id="shipLeftBtn">Ship ◀</button>
+      <button id="shipRightBtn">Ship ▶</button>
+      <p id="status"></p>
+    </div>
+    <div id="game"></div>
     <script type="module" src="/src/main.ts"></script>
+    <script type="module">
+      document.getElementById('myId').textContent =
+        localStorage.getItem('notjackal_playerId') ?? '(new — reload to mint)';
+    </script>
   </body>
 </html>

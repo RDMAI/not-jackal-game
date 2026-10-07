@@ -1,194 +1,128 @@
-import { initializeApp } from 'firebase/app';
-import {
-  getDatabase,
-  ref,
-  set,
-  get,
-  onValue,
-  type Database,
-  type Unsubscribe,
-} from 'firebase/database';
+// Wiring only: Firebase + Phaser + UI. All rules live in core/rules.ts.
+import Phaser from 'phaser';
+import { validateMove } from './core/rules';
+import type { Action, GameState } from './core/types';
+import { makeGameConfig } from './game/config';
+import { GameScene } from './game/GameScene';
+import { createRoom, getMyId, joinRoom, startGame, submitAction, subscribeRoom } from './net/room';
 import './style.css';
+import { mountUI } from './ui';
 
-// 0 = green, 1 = blue
-type CellValue = 0 | 1;
-type BoardState = CellValue[][];
+const myId = getMyId();
+let roomId: string | null = null;
+let latest: GameState | null = null;
 
-interface RoomData {
-  board_state?: BoardState | null;
-  board_size_x?: number;
-  board_size_y?: number;
-  [key: string]: unknown;
+const game = new Phaser.Game(makeGameConfig());
+
+function scene(): GameScene {
+  const s = game.scene.getScene('game') as GameScene;
+  return s;
 }
 
-const firebaseConfig = {
-  apiKey: 'AIzaSyARAjRjKBpRP9h1hIccJ_n1iqbON-vaHgs',
-  authDomain: 'family-board-games-54639.firebaseapp.com',
-  projectId: 'family-board-games-54639',
-  storageBucket: 'family-board-games-54639.firebasestorage.app',
-  messagingSenderId: '557276950036',
-  appId: '1:557276950036:web:edac4d1cafc69480970101',
-  databaseURL:
-    'https://family-board-games-54639-default-rtdb.europe-west1.firebasedatabase.app/',
-};
-
-const app = initializeApp(firebaseConfig);
-const db: Database = getDatabase(app);
-
-let gridState: BoardState = [];
-let cells: HTMLTableCellElement[][] = [];
-let currentRoomId: string | null = null;
-let unsubscribe: Unsubscribe | null = null;
-
-function getElement<T extends HTMLElement>(id: string): T {
-  const el = document.getElementById(id);
-  if (!el) {
-    throw new Error(`Missing element: #${id}`);
-  }
-  return el as T;
-}
-
-const table = getElement<HTMLTableElement>('grid');
-const sendBtn = getElement<HTMLButtonElement>('sendBtn');
-const statusEl = getElement<HTMLParagraphElement>('status');
-const changesField = getElement<HTMLTextAreaElement>('changes');
-const roomError = getElement<HTMLParagraphElement>('roomError');
-const roomIdInput = getElement<HTMLInputElement>('roomIdInput');
-const joinBtn = getElement<HTMLButtonElement>('joinBtn');
-
-function normalizeCell(value: unknown): CellValue {
-  return value === 1 ? 1 : 0;
-}
-
-function buildBoard(rows: number, cols: number, initial?: BoardState | null): void {
-  table.innerHTML = '';
-  cells = [];
-  gridState = Array.from({ length: rows }, (_, r) =>
-    Array.from({ length: cols }, (_, c) => normalizeCell(initial?.[r]?.[c])),
-  );
-
-  for (let r = 0; r < rows; r++) {
-    const tr = document.createElement('tr');
-    const rowCells: HTMLTableCellElement[] = [];
-    for (let c = 0; c < cols; c++) {
-      const td = document.createElement('td');
-      if (gridState[r][c] === 1) {
-        td.classList.add('blue');
-      }
-      td.addEventListener('click', () => {
-        gridState[r][c] = gridState[r][c] === 0 ? 1 : 0;
-        td.classList.toggle('blue', gridState[r][c] === 1);
-      });
-      tr.appendChild(td);
-      rowCells.push(td);
-    }
-    table.appendChild(tr);
-    cells.push(rowCells);
-  }
-}
-
-function renderBoard(): void {
-  for (let r = 0; r < gridState.length; r++) {
-    for (let c = 0; c < gridState[r].length; c++) {
-      cells[r][c].classList.toggle('blue', gridState[r][c] === 1);
-    }
-  }
-}
-
-function setBoardVisible(visible: boolean): void {
-  const display = visible ? '' : 'none';
-  table.style.display = display;
-  sendBtn.style.display = display;
-  statusEl.style.display = display;
-  changesField.style.display = display;
-}
-
-function subscribeToRoom(roomId: string): void {
-  if (unsubscribe) {
-    unsubscribe();
-    unsubscribe = null;
-  }
-
-  const boardRef = ref(db, `rooms/${roomId}/board_state`);
-  unsubscribe = onValue(boardRef, (snapshot) => {
-    const remote = snapshot.val() as BoardState | null;
-    if (!remote) return;
-
-    const diffs: string[] = [];
-    for (let r = 0; r < remote.length; r++) {
-      for (let c = 0; c < (remote[r]?.length ?? 0); c++) {
-        const localVal: CellValue = gridState[r]?.[c] ?? 0;
-        const remoteVal: CellValue = normalizeCell(remote[r]?.[c]);
-        if (localVal !== remoteVal) {
-          diffs.push(`[${r},${c}]: ${localVal} -> ${remoteVal}`);
-        }
-      }
-    }
-
-    if (diffs.length > 0) {
-      changesField.value += (changesField.value ? '\n' : '') + diffs.join('\n');
-      changesField.scrollTop = changesField.scrollHeight;
-    }
-
-    // Resize if remote size differs
-    if (
-      remote.length !== gridState.length ||
-      (remote[0]?.length ?? 0) !== (gridState[0]?.length ?? 0)
-    ) {
-      buildBoard(remote.length, remote[0].length, remote);
-    } else {
-      for (let r = 0; r < remote.length; r++) {
-        for (let c = 0; c < remote[r].length; c++) {
-          gridState[r][c] = normalizeCell(remote[r][c]);
-        }
-      }
-      renderBoard();
-    }
-  });
-}
-
-joinBtn.addEventListener('click', async () => {
-  const roomId = roomIdInput.value.trim();
-  if (!roomId) {
-    roomError.textContent = 'invalid id';
-    setBoardVisible(false);
+async function doAction(action: Action): Promise<void> {
+  if (!roomId || !latest) {
+    ui.setStatus('Join a room first');
     return;
   }
+  const v = validateMove(latest, myId, action);
+  if (!v.ok) {
+    ui.setStatus(`Invalid: ${v.reason}`);
+    return;
+  }
+  ui.setStatus('Sending…');
+  const r = await submitAction(roomId, myId, action);
+  ui.setStatus(r.ok ? 'OK' : `Rejected: ${r.reason}`);
+  if (r.ok) scene().clearSelection();
+}
 
-  try {
-    const roomSnap = await get(ref(db, `rooms/${roomId}`));
-    const room = roomSnap.val() as RoomData | null;
-    if (!roomSnap.exists() || room?.board_state == null) {
-      roomError.textContent = 'invalid id';
-      setBoardVisible(false);
+const ui = mountUI({
+  onCreate: async (id, maxPlayers) => {
+    if (!id) return ui.setError('invalid id');
+    ui.setError('');
+    try {
+      await createRoom(id, maxPlayers, myId);
+      roomId = id;
+      subscribe(id);
+      ui.setStatus(`Room ${id} created as ${myId.slice(0, 6)}`);
+    } catch (e) {
+      ui.setError((e as Error).message);
+    }
+  },
+  onJoin: async (id) => {
+    if (!id) return ui.setError('invalid id');
+    ui.setError('');
+    const r = await joinRoom(id, myId);
+    if (!r.ok) {
+      ui.setError(r.reason ?? 'cannot join');
       return;
     }
-
-    const boardState = room.board_state as BoardState;
-    const sizeY = room.board_size_y ?? boardState.length;
-    const sizeX = room.board_size_x ?? boardState[0].length;
-
-    currentRoomId = roomId;
-    roomError.textContent = '';
-    changesField.value = '';
-    statusEl.textContent = '';
-    buildBoard(sizeY, sizeX, boardState);
-    setBoardVisible(true);
-    subscribeToRoom(roomId);
-  } catch (e) {
-    console.error(e);
-    roomError.textContent = 'invalid id';
-    setBoardVisible(false);
-  }
+    roomId = id;
+    subscribe(roomId);
+    ui.setStatus(`Joined ${id} as ${myId.slice(0, 6)}`);
+  },
+  onStart: async () => {
+    if (!roomId) return;
+    const r = await startGame(roomId);
+    ui.setStatus(r.ok ? 'Game started!' : `Cannot start: ${r.reason}`);
+  },
+  onGrab: () => {
+    const sel = scene().getSelectedPiece();
+    // Default to first own piece standing on a coin if none selected.
+    const pid = sel ?? findGrabbable();
+    if (!pid) return ui.setStatus('Select a piece on coins first (click it)');
+    void doAction({ kind: 'grab', pieceId: pid });
+  },
+  onDrop: () => {
+    const sel = scene().getSelectedPiece();
+    const pid = sel ?? findCarrying();
+    if (!pid) return ui.setStatus('Select a carrying piece first');
+    void doAction({ kind: 'drop', pieceId: pid });
+  },
+  onEndTurn: () => void doAction({ kind: 'endTurn' }),
+  onShipMove: (dir) => void doAction({ kind: 'moveShip', dir }),
 });
 
-sendBtn.addEventListener('click', async () => {
-  if (!currentRoomId) return;
-  try {
-    await set(ref(db, `rooms/${currentRoomId}/board_state`), gridState);
-    statusEl.textContent = 'Board sent!';
-  } catch (e) {
-    console.error(e);
-    statusEl.textContent = `Failed: ${(e as Error).message}`;
+function findGrabbable(): string | null {
+  if (!latest) return null;
+  for (const p of Object.values(latest.pieces)) {
+    if (p.playerId !== myId || p.onShip || p.carrying) continue;
+    const card = latest.cards[`${p.x}_${p.y}`];
+    if (card && card.type === 'chest' && (card.coinsLeft ?? 0) + (card.coinsOnGround ?? 0) > 0) {
+      return p.id;
+    }
   }
+  return null;
+}
+
+function findCarrying(): string | null {
+  if (!latest) return null;
+  for (const p of Object.values(latest.pieces)) {
+    if (p.playerId === myId && p.carrying) return p.id;
+  }
+  return null;
+}
+
+function subscribe(id: string): void {
+  subscribeRoom(id, (s) => {
+    latest = s;
+    ui.update(s, myId);
+    const sc = scene();
+    sc.setMyId(myId);
+    sc.setState(s);
+  });
+  // Scene may not be ready on first subscribe; poll until active.
+  const timer = setInterval(() => {
+    const sc = game.scene.getScene('game') as GameScene | undefined;
+    if (sc && sc.scene.isActive()) {
+      sc.onAction = (a) => void doAction(a);
+      sc.setMyId(myId);
+      if (latest) sc.setState(latest);
+      clearInterval(timer);
+    }
+  }, 200);
+}
+
+// Attach scene callback once booted too.
+game.events.on('ready', () => {
+  scene().onAction = (a) => void doAction(a);
 });
