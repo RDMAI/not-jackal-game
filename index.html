@@ -6,35 +6,31 @@
     <title>Not Jackal Game</title>
   </head>
   <body>
-    <h1>Not Jackal (Jackal clone)</h1>
-    <p>Your id: <span id="myId"></span></p>
-    <div id="lobby">
-      <input id="roomIdInput" placeholder="Enter room id" />
-      <select id="maxPlayers">
-        <option value="2">2 players</option>
-        <option value="3">3 players</option>
-        <option value="4">4 players</option>
-      </select>
-      <button id="createBtn">Create</button>
-      <button id="joinBtn">Join</button>
-      <button id="startBtn">Start game</button>
-      <p id="roomError" style="color: red"></p>
-    </div>
-    <div id="hud" style="display: none">
+    <h1>Not Jackal (Jackal clone) — local test</h1>
+    <div id="hud">
       <p id="turnLabel"></p>
       <p id="scores"></p>
-      <button id="grabBtn">Grab coin</button>
-      <button id="dropBtn">Drop / Deposit</button>
-      <button id="endTurnBtn">End turn</button>
-      <button id="shipLeftBtn">Ship ◀</button>
-      <button id="shipRightBtn">Ship ▶</button>
+      <button id="newBoardBtn">New board (shuffle)</button>
+      <label><input type="checkbox" id="freeTest" /> Free test (ignore turns)</label>
+      <div id="p1panel">
+        <strong>P1</strong>
+        <button id="p1Grab">Grab</button>
+        <button id="p1Drop">Drop</button>
+        <button id="p1ShipLeft">Ship ◀</button>
+        <button id="p1ShipRight">Ship ▶</button>
+        <button id="p1End">End</button>
+      </div>
+      <div id="p2panel">
+        <strong>P2</strong>
+        <button id="p2Grab">Grab</button>
+        <button id="p2Drop">Drop</button>
+        <button id="p2ShipLeft">Ship ◀</button>
+        <button id="p2ShipRight">Ship ▶</button>
+        <button id="p2End">End</button>
+      </div>
       <p id="status"></p>
     </div>
     <div id="game"></div>
     <script type="module" src="/src/main.ts"></script>
-    <script type="module">
-      document.getElementById('myId').textContent =
-        localStorage.getItem('notjackal_playerId') ?? '(new — reload to mint)';
-    </script>
   </body>
 </html>

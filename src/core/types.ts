@@ -5,15 +5,19 @@ export type Vec = { x: number; y: number };
 
 export type Edge = 'north' | 'south' | 'east' | 'west';
 
-export type CardType = 'empty' | 'arrow' | 'chest' | 'trap';
+export type CardType =
+  | 'empty'
+  | 'arrow_0_4'
+  | 'arrow_1_5'
+  | 'arrow_1_3_5_7'
+  | 'chest_3'
+  | 'trap_2'
+  | 'trap_3';
 
 export interface Card {
   type: CardType;
   faceUp: boolean;
-  arrowDir?: Vec;
-  coinsLeft?: number;
-  coinsOnGround?: number;
-  trapCost?: number;
+  coinsOnGround: number;
 }
 
 export interface Piece {
@@ -29,7 +33,7 @@ export interface Piece {
 export interface Player {
   id: string;
   edge: Edge;
-  /** index along its edge: x for north/south, y for east/west (1..7) */
+  /** index along its edge: x for north/south, y for east/west (0..fieldSize-1) */
   shipPos: number;
   order: number;
   score: number;
@@ -44,8 +48,8 @@ export interface LastMove {
 }
 
 export interface GameState {
-  boardSizeX: number;
-  boardSizeY: number;
+  fieldSizeX: number;
+  fieldSizeY: number;
   status: GameStatus;
   currentTurn: string;
   totalCoins: number;
@@ -54,7 +58,7 @@ export interface GameState {
   moved: boolean;
   players: Record<string, Player>;
   pieces: Record<string, Piece>;
-  /** key `${x}_${y}`, only non-sea cells */
+  /** key `${x}_${y}`, field cells only (0..fieldSize-1) */
   cards: Record<string, Card>;
   lastMove?: LastMove | null;
   winner?: string | null;

@@ -1,5 +1,5 @@
 import { shipCellFor } from './setup';
-import type { Action, GameState, Vec } from './types';
+import type { Action, CardType, GameState, Vec } from './types';
 import { cardKey } from './types';
 
 export interface Validation {
@@ -7,31 +7,68 @@ export interface Validation {
   reason?: string;
 }
 
+/** Keypad digits -> vectors (see first_implementation.md). */
+const DIR_VECS: Record<string, Vec> = {
+  '0': { x: -1, y: -1 },
+  '1': { x: 0, y: -1 },
+  '2': { x: 1, y: -1 },
+  '3': { x: 1, y: 0 },
+  '4': { x: 1, y: 1 },
+  '5': { x: 0, y: 1 },
+  '6': { x: -1, y: 1 },
+  '7': { x: -1, y: 0 },
+};
+
+/** 'arrow_1_5' -> [{x:0,y:-1},{x:0,y:1}] */
+export function parseArrowExits(type: CardType): Vec[] {
+  if (!type.startsWith('arrow_')) return [];
+  const digits = type.slice('arrow_'.length).split('_');
+  const out: Vec[] = [];
+  for (const d of digits) {
+    const v = DIR_VECS[d];
+    if (v) out.push({ ...v });
+  }
+  return out;
+}
+
+/** 'chest_3' -> 3, else 0 */
+export function parseChestCoins(type: CardType): number {
+  if (!type.startsWith('chest_')) return 0;
+  const n = Number(type.slice('chest_'.length));
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** 'trap_2' -> 2, 'trap_3' -> 3, else 0 */
+export function parseTrapCost(type: CardType): number {
+  if (!type.startsWith('trap_')) return 0;
+  const n = Number(type.slice('trap_'.length));
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function isField(x: number, y: number, state: GameState): boolean {
+  return x >= 0 && y >= 0 && x < state.fieldSizeX && y < state.fieldSizeY;
+}
+
+/** Field plus the surrounding sea ring (ships live at -1 / fieldSize). */
 export function isInBounds(x: number, y: number, state: GameState): boolean {
-  return x >= 0 && y >= 0 && x < state.boardSizeX && y < state.boardSizeY;
-}
-
-function isBorder(x: number, y: number, state: GameState): boolean {
-  return x === 0 || y === 0 || x === state.boardSizeX - 1 || y === state.boardSizeY - 1;
-}
-
-function isCorner(x: number, y: number, state: GameState): boolean {
-  const maxX = state.boardSizeX - 1;
-  const maxY = state.boardSizeY - 1;
-  return (x === 0 || x === maxX) && (y === 0 || y === maxY);
+  return (
+    x >= -1 && y >= -1 && x <= state.fieldSizeX && y <= state.fieldSizeY
+  );
 }
 
 /** Ship cell of a given player in the given state. */
 export function shipCellOf(state: GameState, playerId: string): Vec | null {
   const p = state.players[playerId];
   if (!p) return null;
-  return shipCellFor(p.edge, p.shipPos);
+  return shipCellFor(p.edge, p.shipPos, state.fieldSizeX, state.fieldSizeY);
 }
 
-/** True if cell is sea: border water except any player's current ship cell. */
+/**
+ * True if cell is sea: outside the field, except any player's current
+ * ship cell. Far outside the ring also counts as sea.
+ */
 export function isSea(state: GameState, x: number, y: number): boolean {
-  if (!isInBounds(x, y, state)) return true;
-  if (!isBorder(x, y, state)) return false;
+  if (isField(x, y, state)) return false;
   for (const pid of Object.keys(state.players)) {
     const s = shipCellOf(state, pid);
     if (s && s.x === x && s.y === y) return false;
@@ -64,10 +101,15 @@ export function nextPlayerId(state: GameState): string {
   return ids[(idx + 1) % ids.length];
 }
 
-function coinsOnCard(state: GameState, x: number, y: number): number {
+/** Coins grabbable on a card: just coinsOnGround, for every card type. */
+export function coinsOnCard(state: GameState, x: number, y: number): number {
   const c = state.cards[cardKey(x, y)];
-  if (!c || c.type !== 'chest') return 0;
-  return (c.coinsLeft ?? 0) + (c.coinsOnGround ?? 0);
+  if (!c) return 0;
+  return c.coinsOnGround ?? 0;
+}
+
+function isArrowCard(type: CardType): boolean {
+  return type.startsWith('arrow_');
 }
 
 // ---- validation (pure, no I/O) ----
@@ -90,13 +132,10 @@ export function validateMove(
       if (state.moved) return { ok: false, reason: 'already moved this turn' };
       if (action.dir !== -1 && action.dir !== 1) return { ok: false, reason: 'bad dir' };
       const p = state.players[playerId];
+      const max = p.edge === 'north' || p.edge === 'south' ? state.fieldSizeX : state.fieldSizeY;
       const next = p.shipPos + action.dir;
-      if (next < 1 || next > state.boardSizeX - 2) return { ok: false, reason: 'ship at edge' };
-      const target =
-        p.edge === 'north' || p.edge === 'south'
-          ? { x: next, y: p.edge === 'north' ? 0 : state.boardSizeY - 1 }
-          : { x: p.edge === 'west' ? 0 : state.boardSizeX - 1, y: next };
-      if (isCorner(target.x, target.y, state)) return { ok: false, reason: 'ship cannot go to corner' };
+      if (next < 0 || next >= max) return { ok: false, reason: 'ship at edge' };
+      const target = shipCellFor(p.edge, next, state.fieldSizeX, state.fieldSizeY);
       // Cannot sail onto another ship's cell.
       for (const otherId of Object.keys(state.players)) {
         if (otherId === playerId) continue;
@@ -120,6 +159,17 @@ export function validateMove(
       if (isSea(state, tx, ty) && !isOwnShipCell(state, playerId, tx, ty)) {
         return { ok: false, reason: 'cannot sail to open sea' };
       }
+      // Arrow-exit restriction: leaving a face-up arrow only via its exits.
+      if (!piece.onShip) {
+        const cur = state.cards[cardKey(piece.x, piece.y)];
+        if (cur && cur.faceUp && isArrowCard(cur.type)) {
+          const exits = parseArrowExits(cur.type);
+          const dx = tx - piece.x;
+          const dy = ty - piece.y;
+          const allowed = exits.some((v) => v.x === dx && v.y === dy);
+          if (!allowed) return { ok: false, reason: 'must follow arrow exits' };
+        }
+      }
       if (piece.carrying) {
         // Carrying a coin: destination must already be discovered.
         if (!isOwnShipCell(state, playerId, tx, ty)) {
@@ -138,7 +188,15 @@ export function validateMove(
       if (piece.stuck > 0) return { ok: false, reason: 'piece stuck in trap' };
       if (piece.onShip) return { ok: false, reason: 'piece is on ship' };
       if (piece.carrying) return { ok: false, reason: 'already carrying' };
-      if (coinsOnCard(state, piece.x, piece.y) <= 0) return { ok: false, reason: 'no coin here' };
+      if (isSea(state, piece.x, piece.y)) return { ok: false, reason: 'cannot grab at sea' };
+      if (!isOwnShipCell(state, playerId, piece.x, piece.y)) {
+        // Ships hold no piles; also blocks grabbing on enemy ship cells.
+      } else {
+        return { ok: false, reason: 'no coin here' };
+      }
+      const card = state.cards[cardKey(piece.x, piece.y)];
+      if (!card) return { ok: false, reason: 'no coin here' };
+      if ((card.coinsOnGround ?? 0) <= 0) return { ok: false, reason: 'no coin here' };
       return { ok: true };
     }
 
@@ -194,11 +252,46 @@ function checkWin(next: GameState): void {
   }
 }
 
+/** Knock out all enemies standing on (x,y); their coins drop to the card. */
+function knockoutAt(next: GameState, playerId: string, x: number, y: number): void {
+  for (const other of Object.values(next.pieces)) {
+    if (other.playerId !== playerId && !other.onShip && other.x === x && other.y === y) {
+      if (other.carrying) {
+        const c = next.cards[cardKey(x, y)];
+        if (c) c.coinsOnGround = (c.coinsOnGround ?? 0) + 1;
+        other.carrying = false;
+      }
+      const home = shipCellOf(next, other.playerId);
+      other.onShip = true;
+      if (home) {
+        other.x = home.x;
+        other.y = home.y;
+      }
+      other.stuck = 0;
+    }
+  }
+}
+
 export function applyMove(state: GameState, playerId: string, action: Action): GameState {
   const next: GameState = clone(state);
 
   switch (action.kind) {
     case 'endTurn': {
+      // Transient carrying: auto-drop (land) or auto-score (own ship).
+      for (const piece of Object.values(next.pieces)) {
+        if (piece.playerId !== playerId || !piece.carrying) continue;
+        if (isOwnShipCell(next, playerId, piece.x, piece.y)) {
+          piece.carrying = false;
+          next.players[playerId].score += 1;
+        } else {
+          const card = next.cards[cardKey(piece.x, piece.y)];
+          if (card) {
+            card.coinsOnGround = (card.coinsOnGround ?? 0) + 1;
+          }
+          piece.carrying = false;
+        }
+      }
+      checkWin(next);
       // Stuck counters tick down each own turn.
       for (const piece of Object.values(next.pieces)) {
         if (piece.playerId === playerId && piece.stuck > 0) {
@@ -223,14 +316,9 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
     case 'grab': {
       const piece = next.pieces[action.pieceId];
       const card = next.cards[cardKey(piece.x, piece.y)];
-      if (card && card.type === 'chest') {
-        if ((card.coinsOnGround ?? 0) > 0) {
-          card.coinsOnGround = (card.coinsOnGround ?? 0) - 1;
-          piece.carrying = true;
-        } else if ((card.coinsLeft ?? 0) > 0) {
-          card.coinsLeft = (card.coinsLeft ?? 0) - 1;
-          piece.carrying = true;
-        }
+      if (card && (card.coinsOnGround ?? 0) > 0) {
+        card.coinsOnGround = (card.coinsOnGround ?? 0) - 1;
+        piece.carrying = true;
       }
       next.lastMove = { by: playerId, action: `grab:${piece.id}`, at: Date.now() };
       return next;
@@ -245,13 +333,7 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
       } else {
         const card = next.cards[cardKey(piece.x, piece.y)];
         if (card) {
-          if (card.type !== 'chest') {
-            // Dropping on non-chest land: convert to ground pile holder.
-            // Keep type but track coinsOnGround so grab can pick it up.
-            card.coinsOnGround = (card.coinsOnGround ?? 0) + 1;
-          } else {
-            card.coinsOnGround = (card.coinsOnGround ?? 0) + 1;
-          }
+          card.coinsOnGround = (card.coinsOnGround ?? 0) + 1;
         }
         piece.carrying = false;
       }
@@ -273,75 +355,19 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
         const card = next.cards[key];
         if (card && !card.faceUp) {
           card.faceUp = true; // discover
+          if (card.type.startsWith('chest_')) {
+            card.coinsOnGround = (card.coinsOnGround ?? 0) + parseChestCoins(card.type);
+          }
         }
 
         // Knockout enemies on the landing card.
-        for (const other of Object.values(next.pieces)) {
-          if (other.playerId !== playerId && !other.onShip && other.x === dest.x && other.y === dest.y) {
-            if (other.carrying) {
-              const c = next.cards[key];
-              if (c) c.coinsOnGround = (c.coinsOnGround ?? 0) + 1;
-              other.carrying = false;
-            }
-            const home = shipCellOf(next, other.playerId);
-            other.onShip = true;
-            if (home) {
-              other.x = home.x;
-              other.y = home.y;
-            }
-            other.stuck = 0;
-          }
-        }
-
-        // Arrow chain with loop guard.
-        let guard = 0;
-        const seen = new Set<string>([key]);
-        while (guard++ < 20) {
-          const cur = next.cards[cardKey(piece.x, piece.y)];
-          if (!cur || cur.type !== 'arrow' || !cur.faceUp || !cur.arrowDir) break;
-          const nx = piece.x + cur.arrowDir.x;
-          const ny = piece.y + cur.arrowDir.y;
-          if (!isInBounds(nx, ny, next)) break;
-          if (isSea(next, nx, ny) && !isOwnShipCell(next, playerId, nx, ny)) break;
-          const nkey = cardKey(nx, ny);
-          if (seen.has(nkey)) break;
-          seen.add(nkey);
-          piece.x = nx;
-          piece.y = ny;
-          const landingOnShip = isOwnShipCell(next, playerId, nx, ny);
-          piece.onShip = landingOnShip;
-          if (landingOnShip) break;
-          const landed = next.cards[nkey];
-          if (landed && !landed.faceUp) landed.faceUp = true;
-          // Knockout after each arrow step too.
-          for (const other of Object.values(next.pieces)) {
-            if (other.playerId !== playerId && !other.onShip && other.x === nx && other.y === ny) {
-              if (other.carrying) {
-                const c = next.cards[nkey];
-                if (c) c.coinsOnGround = (c.coinsOnGround ?? 0) + 1;
-                other.carrying = false;
-              }
-              const home = shipCellOf(next, other.playerId);
-              other.onShip = true;
-              if (home) {
-                other.x = home.x;
-                other.y = home.y;
-              }
-              other.stuck = 0;
-            }
-          }
-          const after = next.cards[nkey];
-          if (!after || after.type !== 'arrow' || !after.faceUp) {
-            // Apply trap/chest effects of final cell below, then stop.
-            break;
-          }
-        }
+        knockoutAt(next, playerId, dest.x, dest.y);
 
         // Trap effect on final cell.
         if (!piece.onShip) {
           const finalCard = next.cards[cardKey(piece.x, piece.y)];
-          if (finalCard && finalCard.type === 'trap' && finalCard.faceUp) {
-            piece.stuck = finalCard.trapCost ?? 2;
+          if (finalCard && finalCard.faceUp && finalCard.type.startsWith('trap_')) {
+            piece.stuck = parseTrapCost(finalCard.type);
             if (piece.carrying) {
               finalCard.coinsOnGround = (finalCard.coinsOnGround ?? 0) + 1;
               piece.carrying = false;

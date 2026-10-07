@@ -1,128 +1,81 @@
-// Wiring only: Firebase + Phaser + UI. All rules live in core/rules.ts.
+// Wiring only: local hot-seat state + Phaser + UI. All rules live in core/.
 import Phaser from 'phaser';
-import { validateMove } from './core/rules';
-import type { Action, GameState } from './core/types';
+import { createInitialState } from './core/setup';
+import { applyMove, coinsOnCard, validateMove } from './core/rules';
+import type { Action } from './core/types';
 import { makeGameConfig } from './game/config';
 import { GameScene } from './game/GameScene';
-import { createRoom, getMyId, joinRoom, startGame, submitAction, subscribeRoom } from './net/room';
 import './style.css';
-import { mountUI } from './ui';
+import { isFreeTest, mountUI } from './ui';
 
-const myId = getMyId();
-let roomId: string | null = null;
-let latest: GameState | null = null;
+let state = createInitialState(['p1', 'p2'], 2);
 
 const game = new Phaser.Game(makeGameConfig());
 
 function scene(): GameScene {
-  const s = game.scene.getScene('game') as GameScene;
-  return s;
+  return game.scene.getScene('game') as GameScene;
 }
 
-async function doAction(action: Action): Promise<void> {
-  if (!roomId || !latest) {
-    ui.setStatus('Join a room first');
-    return;
+function refresh(): void {
+  ui.update(state);
+  scene().setState(state);
+}
+
+function doAction(playerId: string, action: Action): void {
+  if (isFreeTest() && (playerId === 'p1' || playerId === 'p2')) {
+    state.currentTurn = playerId;
   }
-  const v = validateMove(latest, myId, action);
+  const v = validateMove(state, playerId, action);
   if (!v.ok) {
     ui.setStatus(`Invalid: ${v.reason}`);
     return;
   }
-  ui.setStatus('Sending…');
-  const r = await submitAction(roomId, myId, action);
-  ui.setStatus(r.ok ? 'OK' : `Rejected: ${r.reason}`);
-  if (r.ok) scene().clearSelection();
+  state = applyMove(state, playerId, action);
+  scene().clearSelection();
+  ui.setStatus('OK');
+  refresh();
+}
+
+function findGrabbable(playerId: string): string | null {
+  for (const p of Object.values(state.pieces)) {
+    if (p.playerId !== playerId || p.onShip || p.carrying || p.stuck > 0) continue;
+    if (coinsOnCard(state, p.x, p.y) > 0) return p.id;
+  }
+  return null;
+}
+
+function findCarrying(playerId: string): string | null {
+  for (const p of Object.values(state.pieces)) {
+    if (p.playerId === playerId && p.carrying) return p.id;
+  }
+  return null;
 }
 
 const ui = mountUI({
-  onCreate: async (id, maxPlayers) => {
-    if (!id) return ui.setError('invalid id');
-    ui.setError('');
-    try {
-      await createRoom(id, maxPlayers, myId);
-      roomId = id;
-      subscribe(id);
-      ui.setStatus(`Room ${id} created as ${myId.slice(0, 6)}`);
-    } catch (e) {
-      ui.setError((e as Error).message);
-    }
+  onGrab: (pid) => {
+    const sel = scene().getSelected();
+    const id = sel && sel.playerId === pid ? sel.pieceId : findGrabbable(pid);
+    if (!id) return ui.setStatus('Select a piece on coins first (click it)');
+    doAction(pid, { kind: 'grab', pieceId: id });
   },
-  onJoin: async (id) => {
-    if (!id) return ui.setError('invalid id');
-    ui.setError('');
-    const r = await joinRoom(id, myId);
-    if (!r.ok) {
-      ui.setError(r.reason ?? 'cannot join');
-      return;
-    }
-    roomId = id;
-    subscribe(roomId);
-    ui.setStatus(`Joined ${id} as ${myId.slice(0, 6)}`);
+  onDrop: (pid) => {
+    const sel = scene().getSelected();
+    const id = sel && sel.playerId === pid ? sel.pieceId : findCarrying(pid);
+    if (!id) return ui.setStatus('Select a carrying piece first');
+    doAction(pid, { kind: 'drop', pieceId: id });
   },
-  onStart: async () => {
-    if (!roomId) return;
-    const r = await startGame(roomId);
-    ui.setStatus(r.ok ? 'Game started!' : `Cannot start: ${r.reason}`);
+  onEndTurn: (pid) => doAction(pid, { kind: 'endTurn' }),
+  onShipMove: (pid, dir) => doAction(pid, { kind: 'moveShip', dir }),
+  onNewBoard: () => {
+    state = createInitialState(['p1', 'p2'], 2, Math.random);
+    scene().clearSelection();
+    ui.setStatus('New board dealt');
+    refresh();
   },
-  onGrab: () => {
-    const sel = scene().getSelectedPiece();
-    // Default to first own piece standing on a coin if none selected.
-    const pid = sel ?? findGrabbable();
-    if (!pid) return ui.setStatus('Select a piece on coins first (click it)');
-    void doAction({ kind: 'grab', pieceId: pid });
-  },
-  onDrop: () => {
-    const sel = scene().getSelectedPiece();
-    const pid = sel ?? findCarrying();
-    if (!pid) return ui.setStatus('Select a carrying piece first');
-    void doAction({ kind: 'drop', pieceId: pid });
-  },
-  onEndTurn: () => void doAction({ kind: 'endTurn' }),
-  onShipMove: (dir) => void doAction({ kind: 'moveShip', dir }),
 });
-
-function findGrabbable(): string | null {
-  if (!latest) return null;
-  for (const p of Object.values(latest.pieces)) {
-    if (p.playerId !== myId || p.onShip || p.carrying) continue;
-    const card = latest.cards[`${p.x}_${p.y}`];
-    if (card && card.type === 'chest' && (card.coinsLeft ?? 0) + (card.coinsOnGround ?? 0) > 0) {
-      return p.id;
-    }
-  }
-  return null;
-}
-
-function findCarrying(): string | null {
-  if (!latest) return null;
-  for (const p of Object.values(latest.pieces)) {
-    if (p.playerId === myId && p.carrying) return p.id;
-  }
-  return null;
-}
-
-function subscribe(id: string): void {
-  subscribeRoom(id, (s) => {
-    latest = s;
-    ui.update(s, myId);
-    const sc = scene();
-    sc.setMyId(myId);
-    sc.setState(s);
-  });
-  // Scene may not be ready on first subscribe; poll until active.
-  const timer = setInterval(() => {
-    const sc = game.scene.getScene('game') as GameScene | undefined;
-    if (sc && sc.scene.isActive()) {
-      sc.onAction = (a) => void doAction(a);
-      sc.setMyId(myId);
-      if (latest) sc.setState(latest);
-      clearInterval(timer);
-    }
-  }, 200);
-}
 
 // Attach scene callback once booted too.
 game.events.on('ready', () => {
-  scene().onAction = (a) => void doAction(a);
+  scene().onAction = (pid, a) => doAction(pid, a);
+  refresh();
 });
