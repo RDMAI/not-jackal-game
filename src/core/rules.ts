@@ -148,11 +148,16 @@ export function validateMove(
     }
 
     case 'movePiece': {
-      if (state.moved) return { ok: false, reason: 'already moved this turn' };
       const piece = state.pieces[action.pieceId];
       if (!piece) return { ok: false, reason: 'unknown piece' };
       if (piece.playerId !== playerId) return { ok: false, reason: 'not your piece' };
       if (piece.stuck > 0) return { ok: false, reason: 'piece stuck in trap' };
+      const pending = state.pendingArrow;
+      const isContinuation = !!pending && pending.pieceId === action.pieceId;
+      if (pending && !isContinuation) {
+        return { ok: false, reason: 'must continue arrow move' };
+      }
+      if (!isContinuation && state.moved) return { ok: false, reason: 'already moved this turn' };
       const { x: tx, y: ty } = action.to;
       if (!isInBounds(tx, ty, state)) return { ok: false, reason: 'out of bounds' };
       if (!isNeighbour(piece.x, piece.y, tx, ty)) return { ok: false, reason: 'must move to neighbour' };
@@ -160,6 +165,14 @@ export function validateMove(
         return { ok: false, reason: 'cannot sail to open sea' };
       }
       // Arrow-exit restriction: leaving a face-up arrow only via its exits.
+      // This also enforces chained continuation (piece sits on the arrow
+      // it just landed on). Stale pending with no arrow card cannot continue.
+      if (isContinuation) {
+        const cur = state.cards[cardKey(piece.x, piece.y)];
+        if (!cur || !cur.faceUp || !isArrowCard(cur.type)) {
+          return { ok: false, reason: 'must follow arrow exits' };
+        }
+      }
       if (!piece.onShip) {
         const cur = state.cards[cardKey(piece.x, piece.y)];
         if (cur && cur.faceUp && isArrowCard(cur.type)) {
@@ -299,6 +312,7 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
         }
       }
       next.moved = false;
+      next.pendingArrow = null;
       next.currentTurn = nextPlayerId(next);
       next.lastMove = { by: playerId, action: 'endTurn', at: Date.now() };
       return next;
@@ -379,6 +393,18 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
       }
 
       next.moved = true;
+      // Chained arrows: landing on a face-up arrow keeps the turn open
+      // for that piece to continue along its exits. Anything else ends it.
+      if (!destIsShip) {
+        const finalCard = next.cards[cardKey(piece.x, piece.y)];
+        if (finalCard && finalCard.faceUp && isArrowCard(finalCard.type)) {
+          next.pendingArrow = { pieceId: piece.id };
+        } else {
+          next.pendingArrow = null;
+        }
+      } else {
+        next.pendingArrow = null;
+      }
       next.lastMove = { by: playerId, action: `movePiece:${piece.id}->${dest.x},${dest.y}`, at: Date.now() };
       return next;
     }

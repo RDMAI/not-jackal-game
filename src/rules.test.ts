@@ -182,27 +182,53 @@ describe('rules', () => {
     expect(s2.cards['2_2'].coinsOnGround).toBe(1);
   });
 
-  it('no forced arrow slide; next move restricted to arrow exits', () => {
+  it('arrow landing chains: pendingArrow set, continue same turn along exits', () => {
     const s = runningState();
     s.pieces['p1_0'].onShip = false;
     s.pieces['p1_0'].x = 1;
     s.pieces['p1_0'].y = 2;
     s.cards['2_2'] = { type: 'arrow_1_5', faceUp: false, coinsOnGround: 0 };
+    s.cards['2_3'] = { type: 'empty', faceUp: true, coinsOnGround: 0 };
+    s.cards['3_2'] = { type: 'empty', faceUp: true, coinsOnGround: 0 };
     const s2 = applyMove(s, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 2 } });
-    // Landing stays put (no auto-step) and flips face-up.
+    // Landing stays put and flips face-up, chains.
     expect(s2.pieces['p1_0'].x).toBe(2);
     expect(s2.pieces['p1_0'].y).toBe(2);
     expect(s2.cards['2_2'].faceUp).toBe(true);
-    // Fresh turn to test exit restriction (moved resets on endTurn cycle).
-    const s3 = applyMove(s2, 'p1', { kind: 'endTurn' });
-    const s4 = applyMove(s3, 'p2', { kind: 'endTurn' });
-    s4.cards['2_3'] = { type: 'empty', faceUp: true, coinsOnGround: 0 };
-    s4.cards['3_2'] = { type: 'empty', faceUp: true, coinsOnGround: 0 };
-    const bad = validateMove(s4, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 3, y: 2 } });
+    expect(s2.moved).toBe(true);
+    expect(s2.pendingArrow).toEqual({ pieceId: 'p1_0' });
+    // Non-exit blocked same turn.
+    const bad = validateMove(s2, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 3, y: 2 } });
     expect(bad.ok).toBe(false);
     expect(bad.reason).toBe('must follow arrow exits');
-    const good = validateMove(s4, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 3 } });
+    // Other pieces blocked while chain pending.
+    s.pieces['p1_1'].onShip = false;
+    const s2b: GameState = { ...s2, pieces: { ...s2.pieces, p1_1: { ...s2.pieces['p1_1'], onShip: false, x: 0, y: 0 } } };
+    s2b.cards['0_1'] = { type: 'empty', faceUp: true, coinsOnGround: 0 };
+    const other = validateMove(s2b, 'p1', { kind: 'movePiece', pieceId: 'p1_1', to: { x: 0, y: 1 } });
+    expect(other.ok).toBe(false);
+    // Exit allowed same turn.
+    const good = validateMove(s2, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 3 } });
     expect(good.ok).toBe(true);
+    const s3 = applyMove(s2, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 3 } });
+    // Landing on non-arrow clears pending.
+    expect(s3.pendingArrow).toBeNull();
+    // Chain onto second arrow keeps pending.
+    const t = runningState();
+    t.pieces['p1_0'].onShip = false;
+    t.pieces['p1_0'].x = 1;
+    t.pieces['p1_0'].y = 2;
+    t.cards['2_2'] = { type: 'arrow_1_5', faceUp: false, coinsOnGround: 0 };
+    t.cards['2_3'] = { type: 'arrow_1_5', faceUp: false, coinsOnGround: 0 };
+    const t2 = applyMove(t, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 2 } });
+    expect(t2.pendingArrow).toEqual({ pieceId: 'p1_0' });
+    const t3 = applyMove(t2, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 3 } });
+    expect(t3.cards['2_3'].faceUp).toBe(true);
+    expect(t3.pendingArrow).toEqual({ pieceId: 'p1_0' });
+    // endTurn clears.
+    const t4 = applyMove(t3, 'p1', { kind: 'endTurn' });
+    expect(t4.pendingArrow).toBeNull();
+    expect(t4.moved).toBe(false);
   });
 
   it('trap_3 sticks the piece for 3 turns and endTurn ticks down', () => {

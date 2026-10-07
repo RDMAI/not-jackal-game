@@ -56,6 +56,8 @@ export interface GameState {
   maxPlayers: number;
   /** true once current player used their movePiece/moveShip this turn */
   moved: boolean;
+  /** set when a piece lands on an arrow: must continue along exits same turn */
+  pendingArrow: { pieceId: string } | null;
   players: Record<string, Player>;
   pieces: Record<string, Piece>;
   /** key `${x}_${y}`, field cells only (0..fieldSize-1) */

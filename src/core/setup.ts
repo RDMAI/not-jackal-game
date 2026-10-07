@@ -110,6 +110,7 @@ export function createInitialState(
     totalCoins: TOTAL_COINS,
     maxPlayers,
     moved: false,
+    pendingArrow: null,
     players,
     pieces,
     cards,

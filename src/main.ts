@@ -31,7 +31,11 @@ function doAction(playerId: string, action: Action): void {
     return;
   }
   state = applyMove(state, playerId, action);
-  scene().clearSelection();
+  // Keep the piece selected while an arrow chain is pending so the
+  // player can click the continuation dest same turn.
+  if (!state.pendingArrow) {
+    scene().clearSelection();
+  }
   ui.setStatus('OK');
   refresh();
 }
@@ -65,7 +69,6 @@ const ui = mountUI({
     doAction(pid, { kind: 'drop', pieceId: id });
   },
   onEndTurn: (pid) => doAction(pid, { kind: 'endTurn' }),
-  onShipMove: (pid, dir) => doAction(pid, { kind: 'moveShip', dir }),
   onNewBoard: () => {
     state = createInitialState(['p1', 'p2'], 2, Math.random);
     scene().clearSelection();

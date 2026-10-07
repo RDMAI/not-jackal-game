@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { isSea, parseArrowExits, shipCellOf } from '../core/rules';
+import { shipCellFor } from '../core/setup';
 import type { Action, GameState } from '../core/types';
 import { cardKey } from '../core/types';
 
@@ -21,7 +22,6 @@ function arrowLabel(type: string): string {
 export class GameScene extends Phaser.Scene {
   private state: GameState | null = null;
   private selected: { playerId: string; pieceId: string } | null = null;
-  private shipSelectedPlayer: string | null = null;
   /** called by main.ts: (playerId, action) -> validate + apply */
   public onAction: (playerId: string, a: Action) => void = () => {};
 
@@ -48,7 +48,6 @@ export class GameScene extends Phaser.Scene {
 
   clearSelection(): void {
     this.selected = null;
-    this.shipSelectedPlayer = null;
     this.render();
   }
 
@@ -64,20 +63,58 @@ export class GameScene extends Phaser.Scene {
     if (!s) return 0x222222;
     if (isSea(s, x, y)) return 0x123a6d;
     const card = s.cards[cardKey(x, y)];
-    if (!card || !card.faceUp) return 0x1d3a5f; // face-down
+    if (!card || !card.faceUp) return 0x14532d; // face-down: dark green
     if (card.type === 'empty') return 0x3f7d4e;
     if (card.type.startsWith('arrow_')) return 0x8a7d1e;
     if (card.type.startsWith('chest_')) return 0xa56a1a;
     return 0x8a2a2a; // trap
   }
 
-  /** Cells the selected piece may legally step to (neighbour + arrow exits). */
+  /** Cells the selected piece may legally step to. */
   private allowedTargets(): Set<string> {
     const out = new Set<string>();
     const s = this.state;
     if (!s || !this.selected) return out;
     const p = s.pieces[this.selected.pieceId];
     if (!p) return out;
+    // Chained arrow: only the pending piece's arrow exits.
+    if (s.pendingArrow) {
+      if (p.id !== s.pendingArrow.pieceId) return out;
+      const cur = s.cards[cardKey(p.x, p.y)];
+      if (!cur || !cur.faceUp || !cur.type.startsWith('arrow_')) return out;
+      for (const d of parseArrowExits(cur.type)) out.add(`${p.x + d.x}_${p.y + d.y}`);
+      return out;
+    }
+    // Piece on ship: up-to-2 strictly adjacent sea cells along its edge.
+    if (p.onShip) {
+      const owner = s.players[p.playerId];
+      if (!owner) return out;
+      const max = owner.edge === 'north' || owner.edge === 'south' ? s.fieldSizeX : s.fieldSizeY;
+      for (const dir of [-1, 1] as const) {
+        const nextPos = owner.shipPos + dir;
+        if (nextPos < 0 || nextPos >= max) continue;
+        const t = shipCellFor(owner.edge, nextPos, s.fieldSizeX, s.fieldSizeY);
+        // Exclude enemy-ship collisions.
+        let blocked = false;
+        for (const otherId of Object.keys(s.players)) {
+          if (otherId === p.playerId) continue;
+          const sc = shipCellOf(s, otherId);
+          if (sc && sc.x === t.x && sc.y === t.y) {
+            blocked = true;
+            break;
+          }
+        }
+        if (!blocked) out.add(`${t.x}_${t.y}`);
+      }
+      // Also allow disembark highlights: neighbouring land cells.
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          out.add(`${p.x + dx}_${p.y + dy}`);
+        }
+      }
+      return out;
+    }
     const cur = s.cards[cardKey(p.x, p.y)];
     let deltas: { x: number; y: number }[] | null = null;
     if (cur && cur.faceUp && cur.type.startsWith('arrow_') && !p.onShip) {
@@ -120,56 +157,46 @@ export class GameScene extends Phaser.Scene {
         if (this.selected && allowed.has(`${x}_${y}`)) {
           rect.setStrokeStyle(3, 0x00ff00);
         }
-        // Highlight ship move targets.
-        if (this.shipSelectedPlayer) {
-          const me = s.players[this.shipSelectedPlayer];
-          if (me) {
-            const a = me.shipPos - 1;
-            const b = me.shipPos + 1;
-            const targets =
-              me.edge === 'north' || me.edge === 'south'
-                ? [
-                    { x: a, y: me.edge === 'north' ? -1 : s.fieldSizeY },
-                    { x: b, y: me.edge === 'north' ? -1 : s.fieldSizeY },
-                  ]
-                : [
-                    { x: me.edge === 'west' ? -1 : s.fieldSizeX, y: a },
-                    { x: me.edge === 'west' ? -1 : s.fieldSizeX, y: b },
-                  ];
-            for (const t of targets) {
-              if (t.x === x && t.y === y) rect.setStrokeStyle(3, 0x00ff00);
-            }
-          }
-        }
 
-        // Cell glyph.
+        // Cell glyph. Sea blanks (ships show S), face-down blanks.
+        const arrowFont = `${Math.floor(CELL * 0.6)}px`;
         let glyph = '';
+        let glyphFont = '20px';
         let sub = '';
+        let coinOverlay = '';
         if (isSea(s, x, y)) {
           for (const pid of Object.keys(s.players)) {
             const sc = shipCellOf(s, pid);
             if (sc && sc.x === x && sc.y === y) glyph = 'S';
           }
-          if (!glyph) glyph = '~';
         } else {
           const card = s.cards[cardKey(x, y)];
           if (!card) glyph = '';
-          else if (!card.faceUp) glyph = '?';
+          else if (!card.faceUp) glyph = '';
           else if (card.type.startsWith('arrow_')) {
             glyph = arrowGlyph(card.type);
+            glyphFont = arrowFont;
             sub = arrowLabel(card.type);
           } else if (card.type.startsWith('chest_')) {
-            const n = card.coinsOnGround ?? 0;
-            glyph = n > 0 ? `🪙${n}` : '▢';
+            glyph = '🪎';
+            glyphFont = `${Math.floor(CELL * 0.45)}px`;
           } else if (card.type.startsWith('trap_')) {
             glyph = card.type === 'trap_3' ? '💀3' : '💀2';
+            glyphFont = `${Math.floor(CELL * 0.4)}px`;
           } else glyph = '';
+          if (card?.faceUp && (card.coinsOnGround ?? 0) > 0) {
+            coinOverlay = `🪙${card.coinsOnGround}`;
+          }
         }
         if (glyph) {
-          this.add.text(cx, cy - 14, glyph, { color: '#ffffff', fontSize: '20px' }).setOrigin(0.5);
+          const yOff = coinOverlay ? -18 : -6;
+          this.add.text(cx, cy + yOff, glyph, { color: '#ffffff', fontSize: glyphFont }).setOrigin(0.5);
+        }
+        if (coinOverlay) {
+          this.add.text(cx, cy + CELL / 2 - 20, coinOverlay, { color: '#ffe27a', fontSize: '18px' }).setOrigin(0.5);
         }
         if (sub) {
-          this.add.text(cx, cy + 12, sub, { color: '#dddddd', fontSize: '12px' }).setOrigin(0.5);
+          this.add.text(cx, cy + CELL / 2 - 38, sub, { color: '#dddddd', fontSize: '12px' }).setOrigin(0.5);
         }
       }
     }
@@ -201,7 +228,6 @@ export class GameScene extends Phaser.Scene {
     // All pieces clickable (hot-seat); clicking again deselects.
     this.selected =
       this.selected?.pieceId === pieceId ? null : { playerId: piece.playerId, pieceId };
-    this.shipSelectedPlayer = null;
     this.render();
   }
 
@@ -209,11 +235,30 @@ export class GameScene extends Phaser.Scene {
     const s = this.state;
     if (!s) return;
 
-    // 1. If a piece is selected and dest clicked -> try movePiece as current turn.
+    // 1. If a piece is selected and dest clicked -> movePiece, or
+    //    piece-on-ship + strictly adjacent sea cell -> moveShip.
     if (this.selected) {
       const sel = s.pieces[this.selected.pieceId];
       if (sel && (sel.x !== x || sel.y !== y)) {
         const pid = this.selected.pieceId;
+        if (sel.onShip) {
+          const owner = s.players[sel.playerId];
+          if (owner) {
+            const dir =
+              owner.edge === 'north' || owner.edge === 'south'
+                ? x - owner.shipPos
+                : y - owner.shipPos;
+            if (dir === 1 || dir === -1) {
+              const expected = shipCellFor(owner.edge, owner.shipPos + dir, s.fieldSizeX, s.fieldSizeY);
+              if (expected.x === x && expected.y === y) {
+                this.selected = null;
+                this.render();
+                this.onAction(s.currentTurn, { kind: 'moveShip', dir: dir as -1 | 1 });
+                return;
+              }
+            }
+          }
+        }
         this.selected = null;
         this.render();
         this.onAction(s.currentTurn, { kind: 'movePiece', pieceId: pid, to: { x, y } });
@@ -221,40 +266,12 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // 2. If ship move armed and a target clicked -> moveShip as current turn.
-    if (this.shipSelectedPlayer) {
-      const me = s.players[this.shipSelectedPlayer];
-      const sc = me ? shipCellOf(s, this.shipSelectedPlayer) : null;
-      if (me && sc) {
-        const dir = me.edge === 'north' || me.edge === 'south' ? x - me.shipPos : y - me.shipPos;
-        if ((dir === 1 || dir === -1) && Math.abs(x - sc.x) + Math.abs(y - sc.y) <= 2) {
-          const who = this.shipSelectedPlayer;
-          this.shipSelectedPlayer = null;
-          this.render();
-          this.onAction(who, { kind: 'moveShip', dir: dir as -1 | 1 });
-          return;
-        }
-      }
-      this.shipSelectedPlayer = null;
-      this.render();
-      return;
-    }
-
-    // 3. Clicking a piece stack selects the top piece there.
+    // 2. Clicking a piece stack selects the top piece there.
     const stack = Object.values(s.pieces).find((p) => p.x === x && p.y === y);
     if (stack) {
       this.selected = { playerId: stack.playerId, pieceId: stack.id };
-      this.shipSelectedPlayer = null;
       this.render();
       return;
-    }
-
-    // 4. Clicking the current-turn ship cell arms ship move.
-    const sc = shipCellOf(s, s.currentTurn);
-    if (sc && sc.x === x && sc.y === y) {
-      this.shipSelectedPlayer = s.currentTurn;
-      this.selected = null;
-      this.render();
     }
   }
 }

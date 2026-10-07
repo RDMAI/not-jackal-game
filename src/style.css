@@ -11,7 +11,75 @@ button {
   cursor: pointer;
 }
 
+#layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+#sidebar {
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+#sidebar #hud {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#boardPane {
+  flex: 1;
+  min-width: 0;
+}
+
+#scoreBoard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+#turnLabel {
+  font-size: 1.1em;
+  font-weight: 600;
+  margin: 0;
+}
+
+#scores {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.score-row {
+  padding: 8px 10px;
+  border: 1px solid #444;
+  border-radius: 8px;
+  background: #141b33;
+}
+
+.score-row.current {
+  border: 2px solid gold;
+  background: #1c2440;
+}
+
+.score-total {
+  color: #ffe27a;
+}
+
+.score-winner {
+  font-weight: 700;
+  color: gold;
+}
+
 #game canvas {
   border: 1px solid #333;
   margin-top: 12px;
+  max-width: 100%;
+  height: auto;
 }

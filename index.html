@@ -3,34 +3,38 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Not Jackal Game</title>
+    <title>family board game</title>
   </head>
   <body>
-    <h1>Not Jackal (Jackal clone) — local test</h1>
-    <div id="hud">
-      <p id="turnLabel"></p>
-      <p id="scores"></p>
-      <button id="newBoardBtn">New board (shuffle)</button>
-      <label><input type="checkbox" id="freeTest" /> Free test (ignore turns)</label>
-      <div id="p1panel">
-        <strong>P1</strong>
-        <button id="p1Grab">Grab</button>
-        <button id="p1Drop">Drop</button>
-        <button id="p1ShipLeft">Ship ◀</button>
-        <button id="p1ShipRight">Ship ▶</button>
-        <button id="p1End">End</button>
-      </div>
-      <div id="p2panel">
-        <strong>P2</strong>
-        <button id="p2Grab">Grab</button>
-        <button id="p2Drop">Drop</button>
-        <button id="p2ShipLeft">Ship ◀</button>
-        <button id="p2ShipRight">Ship ▶</button>
-        <button id="p2End">End</button>
-      </div>
-      <p id="status"></p>
+    <h1>family board game</h1>
+    <div id="layout">
+      <aside id="sidebar">
+        <div id="hud">
+          <button id="newBoardBtn">New board (shuffle)</button>
+          <label><input type="checkbox" id="freeTest" /> Free test (ignore turns)</label>
+          <div id="p1panel">
+            <strong>P1</strong>
+            <button id="p1Grab">Grab</button>
+            <button id="p1Drop">Drop</button>
+            <button id="p1End">End</button>
+          </div>
+          <div id="p2panel">
+            <strong>P2</strong>
+            <button id="p2Grab">Grab</button>
+            <button id="p2Drop">Drop</button>
+            <button id="p2End">End</button>
+          </div>
+          <p id="status"></p>
+        </div>
+      </aside>
+      <main id="boardPane">
+        <div id="scoreBoard">
+          <p id="turnLabel"></p>
+          <div id="scores"></div>
+        </div>
+        <div id="game"></div>
+      </main>
     </div>
-    <div id="game"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
