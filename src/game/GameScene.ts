@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { isSea, parseArrowExits, parseTrapCost, shipCellOf } from '../core/rules';
+import { canAutoDrop, canAutoGrab, isSea, parseArrowExits, parseTrapCost, shipCellOf } from '../core/rules';
 import { shipCellFor } from '../core/setup';
 import type { Action, GameState } from '../core/types';
 import { cardKey } from '../core/types';
@@ -150,6 +150,20 @@ export class GameScene extends Phaser.Scene {
       }
     }
     for (const d of deltas) out.add(`${p.x + d.x}_${p.y + d.y}`);
+    // Carriers cannot attack: don't highlight enemy-occupied cells (same rule
+    // as validateMove 'cannot attack while carrying'; trap entries drop first).
+    if (p.carrying) {
+      for (const key of [...out]) {
+        const [tx, ty] = key.split('_').map(Number);
+        const destCard = s.cards[cardKey(tx, ty)];
+        const destIsTrap = !!destCard && destCard.faceUp && destCard.type.startsWith('trap_');
+        if (destIsTrap) continue;
+        const enemyThere = Object.values(s.pieces).some(
+          (q) => q.playerId !== p.playerId && !q.onShip && q.x === tx && q.y === ty && (q.trapStep ?? 0) === 0,
+        );
+        if (enemyThere) out.delete(key);
+      }
+    }
     return out;
   }
 
@@ -302,8 +316,39 @@ export class GameScene extends Phaser.Scene {
     const piece = s.pieces[pieceId];
     if (!piece) return;
     // All pieces clickable (hot-seat); clicking again deselects.
-    this.selected =
-      this.selected?.pieceId === pieceId ? null : { playerId: piece.playerId, pieceId };
+    if (this.selected?.pieceId === pieceId) {
+      this.selected = null;
+      // Drop by default: deselecting a piece that grabbed a coin drops it.
+      if (canAutoDrop(s, pieceId)) {
+        this.onAction(s.currentTurn, { kind: 'drop', pieceId });
+        return; // state refresh re-renders via setState.
+      }
+      this.render();
+      return;
+    }
+    // Switching pieces abandons the previous selection: drop its coin first.
+    // this.selected already stores the previous piece, so no extra flag needed.
+    const prev = this.selected;
+    if (prev && prev.pieceId !== pieceId && canAutoDrop(s, prev.pieceId)) {
+      this.onAction(s.currentTurn, { kind: 'drop', pieceId: prev.pieceId });
+      const cur = this.state ?? s;
+      const next = cur.pieces[pieceId] ?? piece;
+      this.selected = { playerId: next.playerId, pieceId };
+      if (canAutoGrab(cur, pieceId)) {
+        this.onAction(cur.currentTurn, { kind: 'grab', pieceId });
+        return;
+      }
+      this.render();
+      return;
+    }
+    this.selected = { playerId: piece.playerId, pieceId };
+    // Grab by default: selecting a piece standing on coins auto-grabs one.
+    // (Same card with coins, or last trap step with coins on the trap.)
+    if (canAutoGrab(s, pieceId)) {
+      // main.ts keeps the selection on grab so the player can move next.
+      this.onAction(s.currentTurn, { kind: 'grab', pieceId });
+      return; // state refresh re-renders via setState.
+    }
     this.render();
   }
 
@@ -332,6 +377,24 @@ export class GameScene extends Phaser.Scene {
           // Same-cell click without trap advance: fall through to select.
         } else {
         const pid = this.selected.pieceId;
+        // Abandon: clicking a non-target cell while holding a grabbed coin
+        // drops it instead of attempting the illegal move.
+        if (!this.allowedTargets().has(`${x}_${y}`) && canAutoDrop(s, pid)) {
+          this.selected = null;
+          this.onAction(s.currentTurn, { kind: 'drop', pieceId: pid });
+          const cur = this.state ?? s;
+          // If the clicked cell holds another piece, select it (with auto-grab).
+          const stackAfter = Object.values(cur.pieces).find((p) => p.x === x && p.y === y);
+          if (stackAfter && stackAfter.id !== pid) {
+            this.selected = { playerId: stackAfter.playerId, pieceId: stackAfter.id };
+            if (canAutoGrab(cur, stackAfter.id)) {
+              this.onAction(cur.currentTurn, { kind: 'grab', pieceId: stackAfter.id });
+              return;
+            }
+          }
+          this.render();
+          return;
+        }
         if (sel.onShip) {
           const owner = s.players[sel.playerId];
           if (owner) {
@@ -358,10 +421,24 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // 2. Clicking a piece stack selects the top piece there.
+    // 2. Clicking a piece stack selects the top piece there (with auto-grab).
     const stack = Object.values(s.pieces).find((p) => p.x === x && p.y === y);
     if (stack) {
+      if (this.selected?.pieceId === stack.id) {
+        this.selected = null;
+        // Drop by default (cell-click deselect path, incl. same-cell click).
+        if (canAutoDrop(s, stack.id)) {
+          this.onAction(s.currentTurn, { kind: 'drop', pieceId: stack.id });
+          return;
+        }
+        this.render();
+        return;
+      }
       this.selected = { playerId: stack.playerId, pieceId: stack.id };
+      if (canAutoGrab(s, stack.id)) {
+        this.onAction(s.currentTurn, { kind: 'grab', pieceId: stack.id });
+        return;
+      }
       this.render();
       return;
     }

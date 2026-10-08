@@ -108,6 +108,49 @@ export function coinsOnCard(state: GameState, x: number, y: number): number {
   return c.coinsOnGround ?? 0;
 }
 
+/**
+ * True when selecting a piece should auto-grab a coin (grab by default).
+ * Same conditions as an explicit `grab`: piece + coins on the same card,
+ * trap piles gated to the last step. Turn-safe: only the current player's
+ * piece, no pending arrow chain (must continue the move first).
+ */
+export function canAutoGrab(state: GameState, pieceId: string): boolean {
+  const piece = state.pieces[pieceId];
+  if (!piece) return false;
+  if (state.status !== 'running') return false;
+  if (state.currentTurn !== piece.playerId) return false;
+  if (state.pendingArrow) return false;
+  if (piece.onShip || piece.carrying) return false;
+  if (isSea(state, piece.x, piece.y)) return false;
+  if (isOwnShipCell(state, piece.playerId, piece.x, piece.y)) return false;
+  const card = state.cards[cardKey(piece.x, piece.y)];
+  if (!card) return false;
+  if ((card.coinsOnGround ?? 0) <= 0) return false;
+  if (card.faceUp && card.type.startsWith('trap_')) {
+    const n = parseTrapCost(card.type);
+    if ((piece.trapStep ?? 0) !== n) return false;
+  }
+  return true;
+}
+
+/**
+ * True when deselecting a piece should auto-drop its coin (drop by default).
+ * Mirrors an explicit `drop`: the current player's carrying piece, on land
+ * (returns to the card pile) or on its own ship cell (scores).
+ */
+export function canAutoDrop(state: GameState, pieceId: string): boolean {
+  const piece = state.pieces[pieceId];
+  if (!piece) return false;
+  if (state.status !== 'running') return false;
+  if (state.currentTurn !== piece.playerId) return false;
+  if (!piece.carrying) return false;
+  if (piece.onShip) {
+    return isOwnShipCell(state, piece.playerId, piece.x, piece.y);
+  }
+  if (isSea(state, piece.x, piece.y)) return false;
+  return true;
+}
+
 function isArrowCard(type: CardType): boolean {
   return type.startsWith('arrow_');
 }
@@ -130,9 +173,12 @@ export function validateMove(
 
   switch (action.kind) {
     case 'endTurn':
+      if (state.pendingArrow) return { ok: false, reason: 'must continue arrow move' };
+      if (!state.moved) return { ok: false, reason: 'must move a piece or ship first' };
       return { ok: true };
 
     case 'moveShip': {
+      if (state.pendingArrow) return { ok: false, reason: 'must continue arrow move' };
       if (state.moved) return { ok: false, reason: 'already moved this turn' };
       if (action.dir !== -1 && action.dir !== 1) return { ok: false, reason: 'bad dir' };
       const p = state.players[playerId];
@@ -203,6 +249,22 @@ export function validateMove(
           const card = state.cards[cardKey(tx, ty)];
           if (!card) return { ok: false, reason: 'no card there' };
           if (!card.faceUp) return { ok: false, reason: 'cannot enter unknown with coin' };
+        }
+        // Carrying pieces cannot knock out enemies: block stepping onto an
+        // enemy's cell (same trap step). Trap entry drops the coin first,
+        // so it stays allowed and can still knock out.
+        if (!isOwnShipCell(state, playerId, tx, ty)) {
+          const destCard = state.cards[cardKey(tx, ty)];
+          const destIsTrap = !!destCard && destCard.faceUp && destCard.type.startsWith('trap_');
+          if (!destIsTrap) {
+            for (const other of Object.values(state.pieces)) {
+              if (other.playerId !== playerId && !other.onShip && other.x === tx && other.y === ty) {
+                if ((other.trapStep ?? 0) === 0) {
+                  return { ok: false, reason: 'cannot attack while carrying' };
+                }
+              }
+            }
+          }
         }
       }
       return { ok: true };
@@ -300,8 +362,10 @@ function checkWin(next: GameState): void {
   }
 }
 
-/** Knock out enemies on the same cell AND same trap step; coins drop to the card. */
-function knockoutAt(next: GameState, playerId: string, x: number, y: number, attackerStep: number): void {
+/** Knock out enemies on the same cell AND same trap step; coins drop to the card.
+ * A carrier (attacker with a coin) cannot knock anyone out. */
+function knockoutAt(next: GameState, playerId: string, x: number, y: number, attackerStep: number, attackerCarrying: boolean): void {
+  if (attackerCarrying) return;
   for (const other of Object.values(next.pieces)) {
     if (other.playerId !== playerId && !other.onShip && other.x === x && other.y === y) {
       if ((other.trapStep ?? 0) !== attackerStep) continue;
@@ -399,7 +463,8 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
       const piece = next.pieces[action.pieceId];
       piece.trapStep += 1;
       // Advancing onto an enemy's step knocks out enemies on that step.
-      knockoutAt(next, playerId, piece.x, piece.y, piece.trapStep);
+      // advanceTrap is rejected while carrying, so attacker never carries here.
+      knockoutAt(next, playerId, piece.x, piece.y, piece.trapStep, !!piece.carrying);
       next.moved = true;
       next.pendingArrow = null;
       next.lastMove = { by: playerId, action: `advanceTrap:${piece.id}->${piece.trapStep}`, at: Date.now() };
@@ -441,7 +506,8 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
         }
 
         // Knockout enemies on the same step only.
-        knockoutAt(next, playerId, dest.x, dest.y, piece.trapStep ?? 0);
+        // Carriers cannot knock out: knockoutAt no-ops while carrying.
+        knockoutAt(next, playerId, dest.x, dest.y, piece.trapStep ?? 0, !!piece.carrying);
       } else {
         piece.trapStep = 0;
       }

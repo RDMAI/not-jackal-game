@@ -10,6 +10,8 @@ import {
 } from './core/setup';
 import {
   applyMove,
+  canAutoDrop,
+  canAutoGrab,
   isSea,
   parseArrowExits,
   parseChestCoins,
@@ -84,6 +86,35 @@ describe('rules', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('endTurn requires a move first', () => {
+    const s = runningState();
+    const v = validateMove(s, 'p1', { kind: 'endTurn' });
+    expect(v.ok).toBe(false);
+    expect(v.reason).toBe('must move a piece or ship first');
+    s.moved = true;
+    expect(validateMove(s, 'p1', { kind: 'endTurn' }).ok).toBe(true);
+  });
+
+  it('arrow chain must be resolved before endTurn or ship move', () => {
+    const s = runningState();
+    s.pieces['p1_0'].onShip = false;
+    s.pieces['p1_0'].x = 1;
+    s.pieces['p1_0'].y = 2;
+    s.cards['2_2'] = { type: 'arrow_1_5', faceUp: false, coinsOnGround: 0 };
+    s.cards['2_3'] = { type: 'empty', faceUp: true, coinsOnGround: 0 };
+    const s2 = applyMove(s, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 2 } });
+    expect(s2.pendingArrow).toEqual({ pieceId: 'p1_0' });
+    // Ending the turn or sailing away is blocked while the arrow pends.
+    const end = validateMove(s2, 'p1', { kind: 'endTurn' });
+    expect(end.ok).toBe(false);
+    expect(end.reason).toBe('must continue arrow move');
+    expect(validateMove(s2, 'p1', { kind: 'moveShip', dir: 1 }).ok).toBe(false);
+    // The only way forward is the arrow exit; afterwards the turn can end.
+    const s3 = applyMove(s2, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 3 } });
+    expect(s3.pendingArrow).toBeNull();
+    expect(validateMove(s3, 'p1', { kind: 'endTurn' }).ok).toBe(true);
+  });
+
   it('allows one piece move then blocks second until endTurn', () => {
     const s = runningState();
     s.pieces['p1_0'].onShip = false;
@@ -111,6 +142,9 @@ describe('rules', () => {
     expect(s2.cards['2_1'].faceUp).toBe(true);
     expect(s2.cards['2_1'].type).toBe('chest_3');
     expect(s2.cards['2_1'].coinsOnGround).toBe(3);
+    // No auto-grab on landing; selecting the piece grabs (grab by default).
+    expect(s2.pieces['p1_0'].carrying).toBe(false);
+    expect(canAutoGrab(s2, 'p1_0')).toBe(true);
   });
 
   it('grab takes from coinsOnGround 3->2 and sets carrying', () => {
@@ -188,6 +222,81 @@ describe('rules', () => {
     expect(s2.pieces['p2_0'].onShip).toBe(true);
     expect(s2.pieces['p2_0'].carrying).toBe(false);
     expect(s2.cards['2_2'].coinsOnGround).toBe(1);
+    // Attacker did not auto-grab on landing; selecting it grabs.
+    expect(s2.pieces['p1_0'].carrying).toBe(false);
+  });
+
+  it('carrying attacker cannot knock out: move blocked, no KO on apply', () => {
+    const s = runningState();
+    s.pieces['p1_0'].onShip = false;
+    s.pieces['p1_0'].x = 1;
+    s.pieces['p1_0'].y = 2;
+    s.pieces['p1_0'].carrying = true;
+    s.pieces['p2_0'].onShip = false;
+    s.pieces['p2_0'].x = 2;
+    s.pieces['p2_0'].y = 2;
+    s.cards['1_2'] = { type: 'empty', faceUp: true, coinsOnGround: 0 };
+    s.cards['2_2'] = { type: 'empty', faceUp: true, coinsOnGround: 0 };
+    const v = validateMove(s, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 2 } });
+    expect(v.ok).toBe(false);
+    expect(v.reason).toBe('cannot attack while carrying');
+  });
+
+  it('canAutoGrab: piece on coins grabs, trap gated to last step', () => {
+    const s = runningState();
+    s.pieces['p1_0'].onShip = false;
+    s.pieces['p1_0'].x = 2;
+    s.pieces['p1_0'].y = 2;
+    s.cards['2_2'] = { type: 'chest_3', faceUp: true, coinsOnGround: 2 };
+    expect(canAutoGrab(s, 'p1_0')).toBe(true);
+    // Already carrying -> no auto-grab.
+    const carrying = { ...s, pieces: { ...s.pieces, p1_0: { ...s.pieces['p1_0'], carrying: true } } };
+    expect(canAutoGrab(carrying, 'p1_0')).toBe(false);
+    // No coins -> no auto-grab.
+    const empty = { ...s, cards: { ...s.cards, '2_2': { type: 'chest_3' as const, faceUp: true, coinsOnGround: 0 } } };
+    expect(canAutoGrab(empty, 'p1_0')).toBe(false);
+    // Wrong turn -> no auto-grab.
+    const notTurn = { ...s, currentTurn: 'p2' };
+    expect(canAutoGrab(notTurn, 'p1_0')).toBe(false);
+    // Trap mid-step with coins -> no auto-grab; last step -> grab.
+    const t = runningState();
+    t.pieces['p1_0'].onShip = false;
+    t.pieces['p1_0'].x = 2;
+    t.pieces['p1_0'].y = 2;
+    t.pieces['p1_0'].trapStep = 1;
+    t.cards['2_2'] = { type: 'trap_3', faceUp: true, coinsOnGround: 1 };
+    expect(canAutoGrab(t, 'p1_0')).toBe(false);
+    const tLast = { ...t, pieces: { ...t.pieces, p1_0: { ...t.pieces['p1_0'], trapStep: 3 } } };
+    expect(canAutoGrab(tLast, 'p1_0')).toBe(true);
+  });
+
+  it('canAutoDrop: deselecting a grabbed piece drops it back', () => {
+    const s = runningState();
+    s.pieces['p1_0'].onShip = false;
+    s.pieces['p1_0'].x = 2;
+    s.pieces['p1_0'].y = 2;
+    s.cards['2_2'] = { type: 'chest_3', faceUp: true, coinsOnGround: 2 };
+    // Not carrying -> no auto-drop.
+    expect(canAutoDrop(s, 'p1_0')).toBe(false);
+    // Select-grab then deselect-drop is a no-op (2 -> 1 -> 2).
+    const grabbed = applyMove(s, 'p1', { kind: 'grab', pieceId: 'p1_0' });
+    expect(grabbed.pieces['p1_0'].carrying).toBe(true);
+    expect(grabbed.cards['2_2'].coinsOnGround).toBe(1);
+    expect(canAutoDrop(grabbed, 'p1_0')).toBe(true);
+    const dropped = applyMove(grabbed, 'p1', { kind: 'drop', pieceId: 'p1_0' });
+    expect(dropped.pieces['p1_0'].carrying).toBe(false);
+    expect(dropped.cards['2_2'].coinsOnGround).toBe(2);
+    expect(canAutoDrop(dropped, 'p1_0')).toBe(false);
+    // Wrong turn -> no auto-drop.
+    const notTurn = { ...grabbed, currentTurn: 'p2' };
+    expect(canAutoDrop(notTurn, 'p1_0')).toBe(false);
+    // Carrying on own ship -> auto-drop scores.
+    const ship = runningState();
+    ship.pieces['p1_0'].x = 2;
+    ship.pieces['p1_0'].y = -1;
+    ship.pieces['p1_0'].onShip = true;
+    ship.pieces['p1_0'].carrying = true;
+    expect(canAutoDrop(ship, 'p1_0')).toBe(true);
   });
 
   it('arrow landing chains: pendingArrow set, continue same turn along exits', () => {
@@ -304,7 +413,7 @@ describe('rules', () => {
     expect(s2.cards['2_2'].coinsOnGround).toBe(1);
     // Grab at k<N rejected.
     expect(validateMove(s2, 'p1', { kind: 'grab', pieceId: 'p1_0' }).ok).toBe(false);
-    // Advance to last step, then grab ok.
+    // Advance to last step, then grab ok (via selection auto-grab).
     let cur = applyMove(s2, 'p1', { kind: 'endTurn' });
     cur = applyMove(cur, 'p2', { kind: 'endTurn' });
     cur = applyMove(cur, 'p1', { kind: 'advanceTrap', pieceId: 'p1_0' });
@@ -313,6 +422,7 @@ describe('rules', () => {
     cur = applyMove(cur, 'p1', { kind: 'advanceTrap', pieceId: 'p1_0' });
     expect(cur.pieces['p1_0'].trapStep).toBe(3);
     expect(validateMove(cur, 'p1', { kind: 'grab', pieceId: 'p1_0' }).ok).toBe(true);
+    expect(canAutoGrab(cur, 'p1_0')).toBe(true);
     // Exit resets trapStep.
     cur.cards['3_2'] = { type: 'empty', faceUp: true, coinsOnGround: 0 };
     const exited = applyMove(cur, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 3, y: 2 } });

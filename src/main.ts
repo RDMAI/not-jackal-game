@@ -83,8 +83,9 @@ function doAction(playerId: string, action: Action): void {
   }
   state = applyMove(state, playerId, action);
   // Keep the piece selected while an arrow chain is pending so the
-  // player can click the continuation dest same turn.
-  if (!state.pendingArrow) {
+  // player can click the continuation dest same turn. Also keep it on
+  // grab (including selection auto-grab) so the player can move next.
+  if (!state.pendingArrow && action.kind !== 'grab') {
     scene()?.clearSelection();
   }
   ui?.setStatus('OK');
