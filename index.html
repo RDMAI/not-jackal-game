@@ -7,34 +7,76 @@
   </head>
   <body>
     <h1>family board game</h1>
-    <div id="layout">
-      <aside id="sidebar">
-        <div id="hud">
-          <button id="newBoardBtn">New board (shuffle)</button>
-          <label><input type="checkbox" id="freeTest" /> Free test (ignore turns)</label>
-          <div id="p1panel">
-            <strong>P1</strong>
-            <button id="p1Grab">Grab</button>
-            <button id="p1Drop">Drop</button>
-            <button id="p1End">End</button>
+
+    <section id="menuView">
+      <h2>Menu</h2>
+      <div class="menu-row">
+        <button id="joinBtn">Join</button>
+        <button id="createLocalBtn">Create local</button>
+        <button id="testBtn">Test</button>
+      </div>
+      <div id="joinPane" hidden>
+        <label>Room ID <input id="roomIdInput" type="text" placeholder="room id" /></label>
+        <button id="joinGoBtn">Join room</button>
+        <p class="hint">Online join coming soon — local only for now.</p>
+      </div>
+      <div id="testPane" hidden>
+        <p class="hint">Test page not implemented.</p>
+      </div>
+    </section>
+
+    <section id="settingsView" hidden>
+      <h2>Create local game</h2>
+      <div class="settings-grid">
+        <label>Width (X) <input id="cfgSizeX" type="number" min="3" max="9" value="5" /></label>
+        <label>Height (Y) <input id="cfgSizeY" type="number" min="3" max="9" value="5" /></label>
+      </div>
+      <h3>Cards (one per type)</h3>
+      <div class="settings-grid" id="deckInputs">
+        <label>empty <input id="cfg_empty" type="number" min="0" value="11" /></label>
+        <label>arrow_0_4 <input id="cfg_arrow_0_4" type="number" min="0" value="2" /></label>
+        <label>arrow_1_5 <input id="cfg_arrow_1_5" type="number" min="0" value="2" /></label>
+        <label>arrow_1_3_5_7 <input id="cfg_arrow_1_3_5_7" type="number" min="0" value="1" /></label>
+        <label>chest_3 <input id="cfg_chest_3" type="number" min="0" value="4" /></label>
+        <label>trap_2 <input id="cfg_trap_2" type="number" min="0" value="3" /></label>
+        <label>trap_3 <input id="cfg_trap_3" type="number" min="0" value="2" /></label>
+      </div>
+      <h3>Sides</h3>
+      <div class="menu-row">
+        <label><input type="checkbox" id="edge_north" checked /> north</label>
+        <label><input type="checkbox" id="edge_south" checked /> south</label>
+        <label><input type="checkbox" id="edge_west" /> west</label>
+        <label><input type="checkbox" id="edge_east" /> east</label>
+      </div>
+      <p id="cfgFixed" class="hint"></p>
+      <p id="cfgError" class="hint"></p>
+      <div class="menu-row">
+        <button id="settingsBackBtn">Back</button>
+        <button id="settingsContinueBtn">Continue</button>
+      </div>
+    </section>
+
+    <section id="gameView" hidden>
+      <button id="quitToMenuBtn">Quit to menu</button>
+      <div id="layout">
+        <aside id="sidebar">
+          <div id="hud">
+            <button id="newBoardBtn">New board (shuffle)</button>
+            <label><input type="checkbox" id="freeTest" /> Free test (ignore turns)</label>
+            <div id="playerPanels"></div>
+            <p id="status"></p>
           </div>
-          <div id="p2panel">
-            <strong>P2</strong>
-            <button id="p2Grab">Grab</button>
-            <button id="p2Drop">Drop</button>
-            <button id="p2End">End</button>
+        </aside>
+        <main id="boardPane">
+          <div id="scoreBoard">
+            <p id="turnLabel"></p>
+            <div id="scores"></div>
           </div>
-          <p id="status"></p>
-        </div>
-      </aside>
-      <main id="boardPane">
-        <div id="scoreBoard">
-          <p id="turnLabel"></p>
-          <div id="scores"></div>
-        </div>
-        <div id="game"></div>
-      </main>
-    </div>
+          <div id="game"></div>
+        </main>
+      </div>
+    </section>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

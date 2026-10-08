@@ -112,6 +112,10 @@ function isArrowCard(type: CardType): boolean {
   return type.startsWith('arrow_');
 }
 
+function trapStepOf(piece: { trapStep?: number }): number {
+  return piece.trapStep ?? 0;
+}
+
 // ---- validation (pure, no I/O) ----
 
 export function validateMove(
@@ -151,13 +155,23 @@ export function validateMove(
       const piece = state.pieces[action.pieceId];
       if (!piece) return { ok: false, reason: 'unknown piece' };
       if (piece.playerId !== playerId) return { ok: false, reason: 'not your piece' };
-      if (piece.stuck > 0) return { ok: false, reason: 'piece stuck in trap' };
       const pending = state.pendingArrow;
       const isContinuation = !!pending && pending.pieceId === action.pieceId;
       if (pending && !isContinuation) {
         return { ok: false, reason: 'must continue arrow move' };
       }
       if (!isContinuation && state.moved) return { ok: false, reason: 'already moved this turn' };
+      // Trapped mid-path: must advanceTrap, cannot movePiece away.
+      if (trapStepOf(piece) > 0) {
+        const curCard = state.cards[cardKey(piece.x, piece.y)];
+        if (curCard && curCard.faceUp && curCard.type.startsWith('trap_')) {
+          const n = parseTrapCost(curCard.type);
+          if (trapStepOf(piece) < n) {
+            return { ok: false, reason: 'must advance trap' };
+          }
+          // trapStep === N: fall through to normal neighbour checks below.
+        }
+      }
       const { x: tx, y: ty } = action.to;
       if (!isInBounds(tx, ty, state)) return { ok: false, reason: 'out of bounds' };
       if (!isNeighbour(piece.x, piece.y, tx, ty)) return { ok: false, reason: 'must move to neighbour' };
@@ -194,11 +208,28 @@ export function validateMove(
       return { ok: true };
     }
 
+    case 'advanceTrap': {
+      const piece = state.pieces[action.pieceId];
+      if (!piece) return { ok: false, reason: 'unknown piece' };
+      if (piece.playerId !== playerId) return { ok: false, reason: 'not your piece' };
+      if (state.pendingArrow) return { ok: false, reason: 'must continue arrow move' };
+      if (state.moved) return { ok: false, reason: 'already moved this turn' };
+      if (piece.onShip) return { ok: false, reason: 'piece is on ship' };
+      if (piece.carrying) return { ok: false, reason: 'cannot advance while carrying' };
+      if (trapStepOf(piece) <= 0) return { ok: false, reason: 'piece not on trap' };
+      const card = state.cards[cardKey(piece.x, piece.y)];
+      if (!card || !card.faceUp || !card.type.startsWith('trap_')) {
+        return { ok: false, reason: 'piece not on trap' };
+      }
+      const n = parseTrapCost(card.type);
+      if (trapStepOf(piece) >= n) return { ok: false, reason: 'already at last step' };
+      return { ok: true };
+    }
+
     case 'grab': {
       const piece = state.pieces[action.pieceId];
       if (!piece) return { ok: false, reason: 'unknown piece' };
       if (piece.playerId !== playerId) return { ok: false, reason: 'not your piece' };
-      if (piece.stuck > 0) return { ok: false, reason: 'piece stuck in trap' };
       if (piece.onShip) return { ok: false, reason: 'piece is on ship' };
       if (piece.carrying) return { ok: false, reason: 'already carrying' };
       if (isSea(state, piece.x, piece.y)) return { ok: false, reason: 'cannot grab at sea' };
@@ -209,6 +240,10 @@ export function validateMove(
       }
       const card = state.cards[cardKey(piece.x, piece.y)];
       if (!card) return { ok: false, reason: 'no coin here' };
+      if (card.faceUp && card.type.startsWith('trap_')) {
+        const n = parseTrapCost(card.type);
+        if (trapStepOf(piece) !== n) return { ok: false, reason: 'must reach last trap step' };
+      }
       if ((card.coinsOnGround ?? 0) <= 0) return { ok: false, reason: 'no coin here' };
       return { ok: true };
     }
@@ -280,13 +315,22 @@ function knockoutAt(next: GameState, playerId: string, x: number, y: number): vo
         other.x = home.x;
         other.y = home.y;
       }
-      other.stuck = 0;
+      other.trapStep = 0;
+      delete (other as unknown as { stuck?: number }).stuck;
     }
   }
 }
 
 export function applyMove(state: GameState, playerId: string, action: Action): GameState {
   const next: GameState = clone(state);
+  // Migrate legacy `stuck` saves: stuck N -> trapStep N (clamped later).
+  for (const piece of Object.values(next.pieces)) {
+    const legacy = (piece as unknown as { stuck?: number }).stuck;
+    if (piece.trapStep === undefined) {
+      piece.trapStep = typeof legacy === 'number' ? legacy : 0;
+    }
+    delete (piece as unknown as { stuck?: number }).stuck;
+  }
 
   switch (action.kind) {
     case 'endTurn': {
@@ -305,12 +349,7 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
         }
       }
       checkWin(next);
-      // Stuck counters tick down each own turn.
-      for (const piece of Object.values(next.pieces)) {
-        if (piece.playerId === playerId && piece.stuck > 0) {
-          piece.stuck -= 1;
-        }
-      }
+      // Trap progress advances only via advanceTrap; endTurn ticks nothing.
       next.moved = false;
       next.pendingArrow = null;
       next.currentTurn = nextPlayerId(next);
@@ -355,11 +394,22 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
       return next;
     }
 
+    case 'advanceTrap': {
+      const piece = next.pieces[action.pieceId];
+      piece.trapStep += 1;
+      next.moved = true;
+      next.pendingArrow = null;
+      next.lastMove = { by: playerId, action: `advanceTrap:${piece.id}->${piece.trapStep}`, at: Date.now() };
+      return next;
+    }
+
     case 'movePiece': {
       const piece = next.pieces[action.pieceId];
       const dest = action.to;
       const destIsShip = isOwnShipCell(next, playerId, dest.x, dest.y);
 
+      // Leaving the trap card resets progress (any move goes to a new x,y).
+      piece.trapStep = 0;
       piece.x = dest.x;
       piece.y = dest.y;
       piece.onShip = destIsShip;
@@ -374,14 +424,14 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
           }
         }
 
-        // Knockout enemies on the landing card.
+        // Knockout enemies on the landing card (all steps).
         knockoutAt(next, playerId, dest.x, dest.y);
 
-        // Trap effect on final cell.
+        // Trap effect on final cell: enter at step 1, drop coin to pile.
         if (!piece.onShip) {
           const finalCard = next.cards[cardKey(piece.x, piece.y)];
           if (finalCard && finalCard.faceUp && finalCard.type.startsWith('trap_')) {
-            piece.stuck = parseTrapCost(finalCard.type);
+            piece.trapStep = 1;
             if (piece.carrying) {
               finalCard.coinsOnGround = (finalCard.coinsOnGround ?? 0) + 1;
               piece.carrying = false;
@@ -389,7 +439,7 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
           }
         }
       } else {
-        piece.stuck = 0;
+        piece.trapStep = 0;
       }
 
       next.moved = true;

@@ -4,6 +4,7 @@ import type { GameState } from './core/types';
 export interface UIHandlers {
   onGrab: (playerId: string) => void;
   onDrop: (playerId: string) => void;
+  onAdvance: (playerId: string) => void;
   onEndTurn: (playerId: string) => void;
   onNewBoard: () => void;
 }
@@ -20,17 +21,56 @@ export function isFreeTest(): boolean {
 }
 
 export function mountUI(h: UIHandlers) {
-  // const turnLabel = el<HTMLParagraphElement>('turnLabel');
   const scores = el<HTMLElement>('scores');
   const statusEl = el<HTMLParagraphElement>('status');
   const hud = el<HTMLDivElement>('hud');
   const newBoardBtn = el<HTMLButtonElement>('newBoardBtn');
+  const panels = document.getElementById('playerPanels') as HTMLElement | null;
 
   newBoardBtn.onclick = () => h.onNewBoard();
-  for (const pid of ['p1', 'p2']) {
-    el<HTMLButtonElement>(`${pid}Grab`).onclick = () => h.onGrab(pid);
-    el<HTMLButtonElement>(`${pid}Drop`).onclick = () => h.onDrop(pid);
-    el<HTMLButtonElement>(`${pid}End`).onclick = () => h.onEndTurn(pid);
+
+  let boundIds: string[] = [];
+
+  function bindPanels(ids: string[]): void {
+    if (panels && ids.join(',') !== boundIds.join(',')) {
+      boundIds = [...ids];
+      panels.innerHTML = '';
+      for (const pid of ids) {
+        const div = document.createElement('div');
+        div.id = `${pid}panel`;
+        const strong = document.createElement('strong');
+        strong.textContent = pid.toUpperCase();
+        div.appendChild(strong);
+        div.appendChild(document.createTextNode(' '));
+        const grab = document.createElement('button');
+        grab.id = `${pid}Grab`;
+        grab.textContent = 'Grab';
+        grab.onclick = () => h.onGrab(pid);
+        const drop = document.createElement('button');
+        drop.id = `${pid}Drop`;
+        drop.textContent = 'Drop';
+        drop.onclick = () => h.onDrop(pid);
+        const adv = document.createElement('button');
+        adv.id = `${pid}Advance`;
+        adv.textContent = 'Advance';
+        adv.onclick = () => h.onAdvance(pid);
+        const end = document.createElement('button');
+        end.id = `${pid}End`;
+        end.textContent = 'End';
+        end.onclick = () => h.onEndTurn(pid);
+        div.append(grab, drop, adv, end);
+        panels.appendChild(div);
+      }
+    }
+    // Legacy static p1/p2 buttons (if present, e.g. old index.html).
+    for (const pid of ids) {
+      const g = document.getElementById(`${pid}Grab`) as HTMLButtonElement | null;
+      const d = document.getElementById(`${pid}Drop`) as HTMLButtonElement | null;
+      const e = document.getElementById(`${pid}End`) as HTMLButtonElement | null;
+      if (g && !g.onclick) g.onclick = () => h.onGrab(pid);
+      if (d && !d.onclick) d.onclick = () => h.onDrop(pid);
+      if (e && !e.onclick) e.onclick = () => h.onEndTurn(pid);
+    }
   }
 
   function setStatus(msg: string): void {
@@ -44,6 +84,7 @@ export function mountUI(h: UIHandlers) {
     }
     hud.style.display = '';
     const ordered = Object.values(state.players).sort((a, b) => a.order - b.order);
+    bindPanels(ordered.map((p) => p.id));
     const collected = ordered.reduce((sum, p) => sum + p.score, 0);
     const left = Math.max(0, state.totalCoins - collected);
     scores.innerHTML = '';
@@ -58,13 +99,6 @@ export function mountUI(h: UIHandlers) {
     total.className = 'score-total';
     total.textContent = `Total: ${collected}/${state.totalCoins} collected, ${left} left`;
     scores.appendChild(total);
-    // if (state.status === 'finished') {
-    //   turnLabel.textContent = `Finished! Winner: ${state.winner ?? '?'} 🎉`;
-    //   turnLabel.classList.add('score-winner');
-    // } else {
-    //   turnLabel.classList.remove('score-winner');
-    //   turnLabel.textContent = `Turn: ${state.currentTurn.toUpperCase()} — move, Grab/Drop or End${state.moved ? ' (moved — Grab/Drop or End Turn)' : ''}${state.pendingArrow ? ' — keep going along the arrow!' : ''}`;
-    // }
   }
 
   return { setStatus, update };

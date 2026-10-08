@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { isSea, parseArrowExits, shipCellOf } from '../core/rules';
+import { isSea, parseArrowExits, parseTrapCost, shipCellOf } from '../core/rules';
 import { shipCellFor } from '../core/setup';
 import type { Action, GameState } from '../core/types';
 import { cardKey } from '../core/types';
@@ -70,6 +70,14 @@ export class GameScene extends Phaser.Scene {
     return 0x8a2a2a; // trap
   }
 
+  /** X offsets for N trap step circles centered in the cell. */
+  private trapCircleXs(cx: number, cell: number, n: number): number[] {
+    const r = cell * 0.12;
+    const spacing = r * 2 + 6;
+    const start = cx - ((n - 1) * spacing) / 2;
+    return Array.from({ length: n }, (_, i) => start + i * spacing);
+  }
+
   /** Cells the selected piece may legally step to. */
   private allowedTargets(): Set<string> {
     const out = new Set<string>();
@@ -84,6 +92,19 @@ export class GameScene extends Phaser.Scene {
       if (!cur || !cur.faceUp || !cur.type.startsWith('arrow_')) return out;
       for (const d of parseArrowExits(cur.type)) out.add(`${p.x + d.x}_${p.y + d.y}`);
       return out;
+    }
+    // Trapped mid-path: only advance in place (own cell highlighted).
+    const trapStep = p.trapStep ?? 0;
+    if (trapStep > 0 && !p.onShip) {
+      const curCard = s.cards[cardKey(p.x, p.y)];
+      if (curCard && curCard.faceUp && curCard.type.startsWith('trap_')) {
+        const n = parseTrapCost(curCard.type);
+        if (trapStep < n) {
+          out.add(`${p.x}_${p.y}`);
+          return out;
+        }
+        // Last step: fall through to 8 neighbours below.
+      }
     }
     // Piece on ship: up-to-2 strictly adjacent sea cells along its edge.
     if (p.onShip) {
@@ -181,16 +202,45 @@ export class GameScene extends Phaser.Scene {
             glyph = '🪎';
             glyphFont = `${Math.floor(CELL * 0.45)}px`;
           } else if (card.type.startsWith('trap_')) {
-            glyph = card.type === 'trap_3' ? '💀3' : '💀2';
-            glyphFont = `${Math.floor(CELL * 0.4)}px`;
+            glyph = ''; // circles drawn below instead of 💀 glyph
           } else glyph = '';
-          if (card?.faceUp && (card.coinsOnGround ?? 0) > 0) {
+          if (card?.faceUp && (card.coinsOnGround ?? 0) > 0 && !card.type.startsWith('trap_')) {
             coinOverlay = `🪙${card.coinsOnGround}`;
           }
         }
         if (glyph) {
           const yOff = coinOverlay ? -18 : -6;
           this.add.text(cx, cy + yOff, glyph, { color: '#ffffff', fontSize: glyphFont }).setOrigin(0.5);
+        }
+        // Open trap: row of N circles; next-step circle stroked green.
+        // Coin pile anchored at the last circle.
+        if (!isSea(s, x, y)) {
+          const card = s.cards[cardKey(x, y)];
+          if (card?.faceUp && card.type.startsWith('trap_')) {
+            const n = parseTrapCost(card.type);
+            const r = CELL * 0.12;
+            const xs = this.trapCircleXs(cx, CELL, n);
+            let nextStep = 0;
+            const selPiece = this.selected ? s.pieces[this.selected.pieceId] : null;
+            if (selPiece && selPiece.x === x && selPiece.y === y && (selPiece.trapStep ?? 0) > 0 && (selPiece.trapStep ?? 0) < n) {
+              nextStep = (selPiece.trapStep ?? 0) + 1;
+            }
+            xs.forEach((px, i) => {
+              const step = i + 1;
+              const c = this.add.circle(px, cy - 8, r);
+              c.setStrokeStyle(step === nextStep ? 3 : 1, step === nextStep ? 0x00ff00 : 0xffffff);
+              c.setFillStyle(0x8a2a2a, 0.0);
+            });
+            if ((card.coinsOnGround ?? 0) > 0) {
+              const lastX = xs[xs.length - 1];
+              this.add
+                .text(lastX, cy - 8 + r + 12, `🪙${card.coinsOnGround}`, {
+                  color: '#ffe27a',
+                  fontSize: '16px',
+                })
+                .setOrigin(0.5);
+            }
+          }
         }
         if (coinOverlay) {
           this.add.text(cx, cy + CELL / 2 - 20, coinOverlay, { color: '#ffe27a', fontSize: '18px' }).setOrigin(0.5);
@@ -207,16 +257,42 @@ export class GameScene extends Phaser.Scene {
       const color = PLAYER_COLORS[(owner?.order ?? 0) % PLAYER_COLORS.length];
       const cx = origin + piece.x * CELL + CELL / 2;
       const cy = origin + piece.y * CELL + CELL / 2;
-      const siblings = Object.values(s.pieces).filter((q) => q.x === piece.x && q.y === piece.y);
-      const idx = siblings.findIndex((q) => q.id === piece.id);
-      const ox = (idx - (siblings.length - 1) / 2) * 18;
+      const trapStep = piece.trapStep ?? 0;
+      const trapCard = !piece.onShip ? s.cards[cardKey(piece.x, piece.y)] : null;
+      const onOpenTrap =
+        trapStep > 0 && trapCard?.faceUp && trapCard.type.startsWith('trap_');
+      let px = cx;
+      let py = cy + 12;
+      if (onOpenTrap && trapCard) {
+        const n = parseTrapCost(trapCard.type);
+        const xs = this.trapCircleXs(cx, CELL, n);
+        const clamped = Math.min(Math.max(trapStep, 1), n);
+        px = xs[clamped - 1];
+        py = cy - 8;
+        // Two own pieces on the same step: first on circle, second below.
+        const sameStep = Object.values(s.pieces).filter(
+          (q) => q.x === piece.x && q.y === piece.y && (q.trapStep ?? 0) === trapStep,
+        );
+        const idx = sameStep.findIndex((q) => q.id === piece.id);
+        if (idx > 0) py += idx * 16;
+        // Horizontal nudge only if somehow >2 share a step.
+        if (sameStep.length > 2) {
+          px += (idx - (sameStep.length - 1) / 2) * 8;
+        }
+      } else {
+        const siblings = Object.values(s.pieces).filter((q) => q.x === piece.x && q.y === piece.y);
+        const idx = siblings.findIndex((q) => q.id === piece.id);
+        px = cx + (idx - (siblings.length - 1) / 2) * 18;
+      }
       const selected = this.selected?.pieceId === piece.id;
-      const circle = this.add.circle(cx + ox, cy + 12, 12, color);
+      const circle = this.add.circle(px, py, 12, color);
       circle.setStrokeStyle(selected ? 3 : 1, selected ? 0x00ff00 : 0x000000);
       circle.setInteractive({ useHandCursor: true });
       circle.on('pointerdown', () => this.handlePieceClick(piece.id));
-      const label = piece.carrying ? '●' : piece.stuck > 0 ? `✕${piece.stuck}` : '○';
-      this.add.text(cx + ox, cy + 12, label, { color: '#ffffff', fontSize: '14px' }).setOrigin(0.5);
+      let label = '○';
+      if (piece.carrying) label = '●';
+      else if (onOpenTrap && trapCard) label = `${trapStep}/${parseTrapCost(trapCard.type)}`;
+      this.add.text(px, py, label, { color: '#ffffff', fontSize: '14px' }).setOrigin(0.5);
     }
   }
 
@@ -236,10 +312,25 @@ export class GameScene extends Phaser.Scene {
     if (!s) return;
 
     // 1. If a piece is selected and dest clicked -> movePiece, or
-    //    piece-on-ship + strictly adjacent sea cell -> moveShip.
+    //    piece-on-ship + strictly adjacent sea cell -> moveShip, or
+    //    own cell with trapped piece -> advanceTrap.
     if (this.selected) {
       const sel = s.pieces[this.selected.pieceId];
-      if (sel && (sel.x !== x || sel.y !== y)) {
+      if (sel) {
+        if (sel.x === x && sel.y === y) {
+          const trapStep = sel.trapStep ?? 0;
+          if (trapStep > 0 && !sel.onShip) {
+            const card = s.cards[cardKey(x, y)];
+            if (card?.faceUp && card.type.startsWith('trap_') && trapStep < parseTrapCost(card.type)) {
+              const pid = this.selected.pieceId;
+              this.selected = null;
+              this.render();
+              this.onAction(s.currentTurn, { kind: 'advanceTrap', pieceId: pid });
+              return;
+            }
+          }
+          // Same-cell click without trap advance: fall through to select.
+        } else {
         const pid = this.selected.pieceId;
         if (sel.onShip) {
           const owner = s.players[sel.playerId];
@@ -263,6 +354,7 @@ export class GameScene extends Phaser.Scene {
         this.render();
         this.onAction(s.currentTurn, { kind: 'movePiece', pieceId: pid, to: { x, y } });
         return;
+        }
       }
     }
 

@@ -27,7 +27,8 @@ export interface Piece {
   y: number;
   onShip: boolean;
   carrying: boolean;
-  stuck: number;
+  /** 0 = free, 1..N = position on current trap card */
+  trapStep: number;
 }
 
 export interface Player {
@@ -71,7 +72,32 @@ export type Action =
   | { kind: 'moveShip'; dir: -1 | 1 }
   | { kind: 'grab'; pieceId: string }
   | { kind: 'drop'; pieceId: string }
+  | { kind: 'advanceTrap'; pieceId: string }
   | { kind: 'endTurn' };
+
+export const CARD_TYPES: CardType[] = [
+  'empty',
+  'arrow_0_4',
+  'arrow_1_5',
+  'arrow_1_3_5_7',
+  'chest_3',
+  'trap_2',
+  'trap_3',
+];
+
+export interface GameConfig {
+  fieldSizeX: number;
+  fieldSizeY: number;
+  deckCounts: Record<CardType, number>;
+  edges: Edge[];
+}
+
+export interface ConfigValidation {
+  ok: boolean;
+  reason?: string;
+  assigned?: number;
+  expected?: number;
+}
 
 export function cardKey(x: number, y: number): string {
   return `${x}_${y}`;

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { buildTestDeck, createInitialState } from './core/setup';
+import {
+  buildDeckFromCounts,
+  buildTestDeck,
+  createInitialState,
+  createStateFromConfig,
+  defaultGameConfig,
+  generateCards,
+  validateConfig,
+} from './core/setup';
 import {
   applyMove,
   isSea,
@@ -231,24 +239,114 @@ describe('rules', () => {
     expect(t4.moved).toBe(false);
   });
 
-  it('trap_3 sticks the piece for 3 turns and endTurn ticks down', () => {
+  it('trap_3 multistep: enter at 1, advance consumes turn, exit at N', () => {
     const s = runningState();
     s.pieces['p1_0'].onShip = false;
     s.pieces['p1_0'].x = 1;
     s.pieces['p1_0'].y = 2;
     s.cards['2_2'] = { type: 'trap_3', faceUp: false, coinsOnGround: 0 };
+    s.cards['3_2'] = { type: 'empty', faceUp: true, coinsOnGround: 0 };
+    s.cards['2_3'] = { type: 'empty', faceUp: true, coinsOnGround: 0 };
     const s2 = applyMove(s, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 2 } });
-    expect(s2.pieces['p1_0'].stuck).toBe(3);
+    expect(s2.pieces['p1_0'].trapStep).toBe(1);
     expect(s2.cards['2_2'].faceUp).toBe(true);
+    // movePiece away from k=1 fails; advance needs a fresh turn.
+    expect(
+      validateMove(s2, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 3, y: 2 } }).ok,
+    ).toBe(false);
+    expect(validateMove(s2, 'p1', { kind: 'advanceTrap', pieceId: 'p1_0' }).ok).toBe(false);
+    const s2b = applyMove(applyMove(s2, 'p1', { kind: 'endTurn' }), 'p2', { kind: 'endTurn' });
+    expect(validateMove(s2b, 'p1', { kind: 'advanceTrap', pieceId: 'p1_0' }).ok).toBe(true);
+    const s3 = applyMove(s2b, 'p1', { kind: 'advanceTrap', pieceId: 'p1_0' });
+    expect(s3.pieces['p1_0'].trapStep).toBe(2);
+    expect(s3.moved).toBe(true);
+    // Second advance same turn rejected.
+    expect(validateMove(s3, 'p1', { kind: 'advanceTrap', pieceId: 'p1_0' }).ok).toBe(false);
+    // Advance while carrying rejected.
+    const carrying = { ...s2b, pieces: { ...s2b.pieces, p1_0: { ...s2b.pieces['p1_0'], carrying: true } } };
+    expect(validateMove(carrying, 'p1', { kind: 'advanceTrap', pieceId: 'p1_0' }).ok).toBe(false);
+    // Move away from k=2 still fails (fresh turn, so failure is trap-gating).
+    const s3b = applyMove(applyMove(s3, 'p1', { kind: 'endTurn' }), 'p2', { kind: 'endTurn' });
+    const away = validateMove(s3b, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 3 } });
+    expect(away.ok).toBe(false);
+    expect(away.reason).toBe('must advance trap');
+  });
+
+  it('idle endTurn does not advance trapped piece (regression)', () => {
+    const s = runningState();
+    s.pieces['p1_0'].onShip = false;
+    s.pieces['p1_0'].x = 2;
+    s.pieces['p1_0'].y = 2;
+    s.pieces['p1_0'].trapStep = 1;
+    s.cards['2_2'] = { type: 'trap_3', faceUp: true, coinsOnGround: 0 };
+    s.pieces['p1_1'].onShip = false;
+    s.pieces['p1_1'].x = 0;
+    s.pieces['p1_1'].y = 0;
+    s.cards['0_1'] = { type: 'empty', faceUp: true, coinsOnGround: 0 };
+    // Move another piece, then endTurn; trapped piece stays at step 1.
+    const s2 = applyMove(s, 'p1', { kind: 'movePiece', pieceId: 'p1_1', to: { x: 0, y: 1 } });
+    expect(s2.pieces['p1_0'].trapStep).toBe(1);
     const s3 = applyMove(s2, 'p1', { kind: 'endTurn' });
     const s4 = applyMove(s3, 'p2', { kind: 'endTurn' });
-    expect(s4.pieces['p1_0'].stuck).toBe(2);
-    const s5 = applyMove(s4, 'p1', { kind: 'endTurn' });
-    const s6 = applyMove(s5, 'p2', { kind: 'endTurn' });
-    expect(s6.pieces['p1_0'].stuck).toBe(1);
-    const s7 = applyMove(s6, 'p1', { kind: 'endTurn' });
-    const s8 = applyMove(s7, 'p2', { kind: 'endTurn' });
-    expect(s8.pieces['p1_0'].stuck).toBe(0);
+    expect(s4.pieces['p1_0'].trapStep).toBe(1);
+  });
+
+  it('trap coins: grab gated to last step, entry drops coin to pile', () => {
+    const s = runningState();
+    s.pieces['p1_0'].onShip = false;
+    s.pieces['p1_0'].x = 1;
+    s.pieces['p1_0'].y = 2;
+    s.pieces['p1_0'].carrying = true;
+    s.cards['2_2'] = { type: 'trap_3', faceUp: false, coinsOnGround: 0 };
+    const s2 = applyMove(s, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 2 } });
+    expect(s2.pieces['p1_0'].trapStep).toBe(1);
+    expect(s2.pieces['p1_0'].carrying).toBe(false);
+    expect(s2.cards['2_2'].coinsOnGround).toBe(1);
+    // Grab at k<N rejected.
+    expect(validateMove(s2, 'p1', { kind: 'grab', pieceId: 'p1_0' }).ok).toBe(false);
+    // Advance to last step, then grab ok.
+    let cur = applyMove(s2, 'p1', { kind: 'endTurn' });
+    cur = applyMove(cur, 'p2', { kind: 'endTurn' });
+    cur = applyMove(cur, 'p1', { kind: 'advanceTrap', pieceId: 'p1_0' });
+    cur = applyMove(cur, 'p1', { kind: 'endTurn' });
+    cur = applyMove(cur, 'p2', { kind: 'endTurn' });
+    cur = applyMove(cur, 'p1', { kind: 'advanceTrap', pieceId: 'p1_0' });
+    expect(cur.pieces['p1_0'].trapStep).toBe(3);
+    expect(validateMove(cur, 'p1', { kind: 'grab', pieceId: 'p1_0' }).ok).toBe(true);
+    // Exit resets trapStep.
+    cur.cards['3_2'] = { type: 'empty', faceUp: true, coinsOnGround: 0 };
+    const exited = applyMove(cur, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 3, y: 2 } });
+    expect(exited.pieces['p1_0'].trapStep).toBe(0);
+  });
+
+  it('knockout on intermediate trap step sends enemy home with trapStep 0', () => {
+    const s = runningState();
+    s.pieces['p2_0'].onShip = false;
+    s.pieces['p2_0'].x = 2;
+    s.pieces['p2_0'].y = 2;
+    s.pieces['p2_0'].trapStep = 1;
+    s.pieces['p1_0'].onShip = false;
+    s.pieces['p1_0'].x = 1;
+    s.pieces['p1_0'].y = 2;
+    s.cards['2_2'] = { type: 'trap_3', faceUp: true, coinsOnGround: 0 };
+    const s2 = applyMove(s, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 2 } });
+    expect(s2.pieces['p2_0'].onShip).toBe(true);
+    expect(s2.pieces['p2_0'].trapStep).toBe(0);
+    expect(s2.pieces['p1_0'].trapStep).toBe(1);
+  });
+
+  it('landing on trap via arrow chain clears pendingArrow and starts trap', () => {
+    const s = runningState();
+    s.pieces['p1_0'].onShip = false;
+    s.pieces['p1_0'].x = 1;
+    s.pieces['p1_0'].y = 2;
+    s.cards['2_2'] = { type: 'trap_3', faceUp: false, coinsOnGround: 0 };
+    // Simulate pending arrow continuation onto the trap.
+    s.pendingArrow = { pieceId: 'p1_0' };
+    s.cards['1_2'] = { type: 'arrow_1_5', faceUp: true, coinsOnGround: 0 };
+    const s2 = applyMove(s, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 2 } });
+    expect(s2.pieces['p1_0'].trapStep).toBe(1);
+    expect(s2.pendingArrow).toBeNull();
   });
 
   it('ship moves along the sea-ring edge and carries pieces', () => {
@@ -267,5 +365,50 @@ describe('rules', () => {
     expect(isSea(s, -1, 0)).toBe(true); // water, no ship
     expect(isSea(s, 2, -1)).toBe(false); // p1 ship
     expect(isSea(s, 2, 5)).toBe(false); // p2 ship
+  });
+});
+
+describe('config', () => {
+  it('default config validates and round-trips deck counts', () => {
+    const c = defaultGameConfig();
+    const v = validateConfig(c);
+    expect(v.ok).toBe(true);
+    expect(v.assigned).toBe(25);
+    expect(v.expected).toBe(25);
+    expect(buildDeckFromCounts(c.deckCounts)).toHaveLength(25);
+  });
+
+  it('rejects wrong sum and fewer than 2 edges', () => {
+    const c = defaultGameConfig();
+    const badSum = { ...c, fieldSizeX: 6, fieldSizeY: 6 };
+    const v = validateConfig(badSum);
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/cards assigned/);
+    const badEdges = { ...c, edges: ['north' as const] };
+    expect(validateConfig(badEdges).ok).toBe(false);
+  });
+
+  it('createStateFromConfig honors size, counts, edges', () => {
+    const c = defaultGameConfig();
+    c.fieldSizeX = 3;
+    c.fieldSizeY = 4;
+    c.deckCounts = {
+      empty: 5,
+      arrow_0_4: 1,
+      arrow_1_5: 1,
+      arrow_1_3_5_7: 1,
+      chest_3: 2,
+      trap_2: 1,
+      trap_3: 1,
+    };
+    c.edges = ['north', 'south', 'west'];
+    expect(validateConfig(c).ok).toBe(true);
+    const s = createStateFromConfig(c, () => 0.5);
+    expect(s.fieldSizeX).toBe(3);
+    expect(s.fieldSizeY).toBe(4);
+    expect(Object.keys(s.cards)).toHaveLength(12);
+    expect(Object.keys(s.players)).toHaveLength(3);
+    expect(s.totalCoins).toBe(6);
+    expect(generateCards(() => 0.5, 3, 4, buildDeckFromCounts(c.deckCounts))).toBeDefined();
   });
 });

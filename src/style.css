@@ -77,6 +77,48 @@ button {
   color: gold;
 }
 
+#menuView, #settingsView, #gameView {
+  margin-top: 12px;
+}
+
+.menu-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.settings-grid {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.settings-grid label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.settings-grid input[type='number'] {
+  width: 64px;
+}
+
+.hint {
+  color: #aaa;
+  max-width: 560px;
+}
+
+#cfgError {
+  color: #ff9a9a;
+}
+
+#quitToMenuBtn {
+  margin-bottom: 12px;
+}
+
 #game canvas {
   border: 1px solid #333;
   margin-top: 12px;
