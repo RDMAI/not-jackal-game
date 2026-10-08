@@ -56,12 +56,6 @@ function ensureGame(): void {
       if (!id) return ui?.setStatus('Select a carrying piece first');
       doAction(pid, { kind: 'drop', pieceId: id });
     },
-    onAdvance: (pid) => {
-      const sel = scene()?.getSelected();
-      const id = sel && sel.playerId === pid ? sel.pieceId : findAdvanceable(pid);
-      if (!id) return ui?.setStatus('Select a trapped piece first (click it, then its cell)');
-      doAction(pid, { kind: 'advanceTrap', pieceId: id });
-    },
     onEndTurn: (pid) => doAction(pid, { kind: 'endTurn' }),
     onNewBoard: () => {
       state = createStateFromConfig(config, Math.random);
@@ -106,18 +100,6 @@ function findGrabbable(playerId: string): string | null {
       if ((p.trapStep ?? 0) !== n) continue;
     }
     if (coinsOnCard(state, p.x, p.y) > 0) return p.id;
-  }
-  return null;
-}
-
-function findAdvanceable(playerId: string): string | null {
-  for (const p of Object.values(state.pieces)) {
-    if (p.playerId !== playerId || p.onShip || p.carrying) continue;
-    if ((p.trapStep ?? 0) <= 0) continue;
-    const card = state.cards[cardKey(p.x, p.y)];
-    if (!card || !card.faceUp || !card.type.startsWith('trap_')) continue;
-    if ((p.trapStep ?? 0) >= parseTrapCost(card.type)) continue;
-    return p.id;
   }
   return null;
 }

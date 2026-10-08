@@ -269,7 +269,7 @@ export class GameScene extends Phaser.Scene {
         const clamped = Math.min(Math.max(trapStep, 1), n);
         px = xs[clamped - 1];
         py = cy - 8;
-        // Two own pieces on the same step: first on circle, second below.
+        // Two pieces on the same step: first on circle, second below.
         const sameStep = Object.values(s.pieces).filter(
           (q) => q.x === piece.x && q.y === piece.y && (q.trapStep ?? 0) === trapStep,
         );

@@ -300,10 +300,11 @@ function checkWin(next: GameState): void {
   }
 }
 
-/** Knock out all enemies standing on (x,y); their coins drop to the card. */
-function knockoutAt(next: GameState, playerId: string, x: number, y: number): void {
+/** Knock out enemies on the same cell AND same trap step; coins drop to the card. */
+function knockoutAt(next: GameState, playerId: string, x: number, y: number, attackerStep: number): void {
   for (const other of Object.values(next.pieces)) {
     if (other.playerId !== playerId && !other.onShip && other.x === x && other.y === y) {
+      if ((other.trapStep ?? 0) !== attackerStep) continue;
       if (other.carrying) {
         const c = next.cards[cardKey(x, y)];
         if (c) c.coinsOnGround = (c.coinsOnGround ?? 0) + 1;
@@ -397,6 +398,8 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
     case 'advanceTrap': {
       const piece = next.pieces[action.pieceId];
       piece.trapStep += 1;
+      // Advancing onto an enemy's step knocks out enemies on that step.
+      knockoutAt(next, playerId, piece.x, piece.y, piece.trapStep);
       next.moved = true;
       next.pendingArrow = null;
       next.lastMove = { by: playerId, action: `advanceTrap:${piece.id}->${piece.trapStep}`, at: Date.now() };
@@ -424,10 +427,8 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
           }
         }
 
-        // Knockout enemies on the landing card (all steps).
-        knockoutAt(next, playerId, dest.x, dest.y);
-
         // Trap effect on final cell: enter at step 1, drop coin to pile.
+        // Determine attacker step first so knockout is same-step only.
         if (!piece.onShip) {
           const finalCard = next.cards[cardKey(piece.x, piece.y)];
           if (finalCard && finalCard.faceUp && finalCard.type.startsWith('trap_')) {
@@ -438,6 +439,9 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
             }
           }
         }
+
+        // Knockout enemies on the same step only.
+        knockoutAt(next, playerId, dest.x, dest.y, piece.trapStep ?? 0);
       } else {
         piece.trapStep = 0;
       }

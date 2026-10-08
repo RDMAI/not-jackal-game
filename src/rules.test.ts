@@ -319,7 +319,7 @@ describe('rules', () => {
     expect(exited.pieces['p1_0'].trapStep).toBe(0);
   });
 
-  it('knockout on intermediate trap step sends enemy home with trapStep 0', () => {
+  it('knockout on same trap step sends enemy home with trapStep 0', () => {
     const s = runningState();
     s.pieces['p2_0'].onShip = false;
     s.pieces['p2_0'].x = 2;
@@ -333,6 +333,42 @@ describe('rules', () => {
     expect(s2.pieces['p2_0'].onShip).toBe(true);
     expect(s2.pieces['p2_0'].trapStep).toBe(0);
     expect(s2.pieces['p1_0'].trapStep).toBe(1);
+  });
+
+  it('enemy on a different trap step is NOT knocked out; pieces coexist', () => {
+    const s = runningState();
+    s.pieces['p2_0'].onShip = false;
+    s.pieces['p2_0'].x = 2;
+    s.pieces['p2_0'].y = 2;
+    s.pieces['p2_0'].trapStep = 2;
+    s.pieces['p1_0'].onShip = false;
+    s.pieces['p1_0'].x = 1;
+    s.pieces['p1_0'].y = 2;
+    s.cards['2_2'] = { type: 'trap_3', faceUp: true, coinsOnGround: 0 };
+    const s2 = applyMove(s, 'p1', { kind: 'movePiece', pieceId: 'p1_0', to: { x: 2, y: 2 } });
+    // Attacker enters at step 1, victim stays at step 2.
+    expect(s2.pieces['p1_0'].trapStep).toBe(1);
+    expect(s2.pieces['p2_0'].onShip).toBe(false);
+    expect(s2.pieces['p2_0'].x).toBe(2);
+    expect(s2.pieces['p2_0'].y).toBe(2);
+    expect(s2.pieces['p2_0'].trapStep).toBe(2);
+  });
+
+  it('advanceTrap onto an enemy step knocks out that step only', () => {
+    const s = runningState();
+    s.pieces['p1_0'].onShip = false;
+    s.pieces['p1_0'].x = 2;
+    s.pieces['p1_0'].y = 2;
+    s.pieces['p1_0'].trapStep = 1;
+    s.pieces['p2_0'].onShip = false;
+    s.pieces['p2_0'].x = 2;
+    s.pieces['p2_0'].y = 2;
+    s.pieces['p2_0'].trapStep = 2;
+    s.cards['2_2'] = { type: 'trap_3', faceUp: true, coinsOnGround: 0 };
+    const s2 = applyMove(s, 'p1', { kind: 'advanceTrap', pieceId: 'p1_0' });
+    expect(s2.pieces['p1_0'].trapStep).toBe(2);
+    expect(s2.pieces['p2_0'].onShip).toBe(true);
+    expect(s2.pieces['p2_0'].trapStep).toBe(0);
   });
 
   it('landing on trap via arrow chain clears pendingArrow and starts trap', () => {

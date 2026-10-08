@@ -4,7 +4,6 @@ import type { GameState } from './core/types';
 export interface UIHandlers {
   onGrab: (playerId: string) => void;
   onDrop: (playerId: string) => void;
-  onAdvance: (playerId: string) => void;
   onEndTurn: (playerId: string) => void;
   onNewBoard: () => void;
 }
@@ -50,15 +49,11 @@ export function mountUI(h: UIHandlers) {
         drop.id = `${pid}Drop`;
         drop.textContent = 'Drop';
         drop.onclick = () => h.onDrop(pid);
-        const adv = document.createElement('button');
-        adv.id = `${pid}Advance`;
-        adv.textContent = 'Advance';
-        adv.onclick = () => h.onAdvance(pid);
         const end = document.createElement('button');
         end.id = `${pid}End`;
         end.textContent = 'End';
         end.onclick = () => h.onEndTurn(pid);
-        div.append(grab, drop, adv, end);
+        div.append(grab, drop, end);
         panels.appendChild(div);
       }
     }
