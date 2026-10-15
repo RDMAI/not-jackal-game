@@ -5,6 +5,7 @@ export interface UIHandlers {
   onGrab: (playerId: string) => void;
   onDrop: (playerId: string) => void;
   onEndTurn: (playerId: string) => void;
+  onRevert: (playerId: string) => void;
   onNewBoard: () => void;
 }
 
@@ -53,7 +54,12 @@ export function mountUI(h: UIHandlers) {
         end.id = `${pid}End`;
         end.textContent = 'End';
         end.onclick = () => h.onEndTurn(pid);
-        div.append(grab, drop, end);
+        const revert = document.createElement('button');
+        revert.id = `${pid}Revert`;
+        revert.textContent = 'Revert';
+        revert.title = 'Undo this turn (disabled after discovering a card)';
+        revert.onclick = () => h.onRevert(pid);
+        div.append(grab, drop, end, revert);
         panels.appendChild(div);
       }
     }
@@ -62,9 +68,11 @@ export function mountUI(h: UIHandlers) {
       const g = document.getElementById(`${pid}Grab`) as HTMLButtonElement | null;
       const d = document.getElementById(`${pid}Drop`) as HTMLButtonElement | null;
       const e = document.getElementById(`${pid}End`) as HTMLButtonElement | null;
+      const r = document.getElementById(`${pid}Revert`) as HTMLButtonElement | null;
       if (g && !g.onclick) g.onclick = () => h.onGrab(pid);
       if (d && !d.onclick) d.onclick = () => h.onDrop(pid);
       if (e && !e.onclick) e.onclick = () => h.onEndTurn(pid);
+      if (r && !r.onclick) r.onclick = () => h.onRevert(pid);
     }
   }
 
@@ -72,7 +80,7 @@ export function mountUI(h: UIHandlers) {
     statusEl.textContent = msg;
   }
 
-  function update(state: GameState | null): void {
+  function update(state: GameState | null, revertEnabled?: Record<string, boolean>): void {
     if (!state) {
       hud.style.display = 'none';
       return;
@@ -94,6 +102,12 @@ export function mountUI(h: UIHandlers) {
     total.className = 'score-total';
     total.textContent = `Total: ${collected}/${state.totalCoins} collected, ${left} left`;
     scores.appendChild(total);
+    if (revertEnabled) {
+      for (const p of ordered) {
+        const btn = document.getElementById(`${p.id}Revert`) as HTMLButtonElement | null;
+        if (btn) btn.disabled = !revertEnabled[p.id];
+      }
+    }
   }
 
   return { setStatus, update };

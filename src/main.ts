@@ -2,7 +2,7 @@
 import Phaser from 'phaser';
 import { createStateFromConfig, defaultGameConfig, validateConfig } from './core/setup';
 import { applyMove, coinsOnCard, parseTrapCost, validateMove } from './core/rules';
-import type { Action, CardType, Edge, GameConfig } from './core/types';
+import type { Action, CardType, Edge, GameConfig, GameState } from './core/types';
 import { CARD_TYPES, cardKey } from './core/types';
 import { makeGameConfig } from './game/config';
 import { GameScene } from './game/GameScene';
@@ -11,6 +11,48 @@ import { isFreeTest, mountUI } from './ui';
 
 let config: GameConfig = defaultGameConfig();
 let state = createStateFromConfig(config, Math.random);
+
+// Turn-start snapshot for full-turn revert (Firebase-ready: plain JSON clone).
+// Refreshed only on turn boundaries / new game, never after mid-turn actions.
+let turnStartSnapshot: GameState | null = null;
+let turnDirty = false;
+
+function cloneState(s: GameState): GameState {
+  return JSON.parse(JSON.stringify(s)) as GameState;
+}
+
+function takeSnapshot(): void {
+  turnStartSnapshot = cloneState(state);
+  turnDirty = false;
+}
+
+/** True if any card flipped face-down -> face-up since the snapshot. */
+export function hasDiscoveredSince(snap: GameState | null, cur: GameState): boolean {
+  if (!snap) return false;
+  for (const key of Object.keys(cur.cards)) {
+    const before = snap.cards[key];
+    const after = cur.cards[key];
+    if (after?.faceUp && !before?.faceUp) return true;
+  }
+  return false;
+}
+
+function canRevert(playerId: string): boolean {
+  if (!turnStartSnapshot) return false;
+  if (state.status !== 'running') return false;
+  if (state.currentTurn !== playerId) return false;
+  if (!turnDirty) return false;
+  if (hasDiscoveredSince(turnStartSnapshot, state)) return false;
+  return true;
+}
+
+function revertEnabledFor(): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const pid of Object.keys(state.players)) {
+    out[pid] = canRevert(pid);
+  }
+  return out;
+}
 
 let game: Phaser.Game | null = null;
 let ui: ReturnType<typeof mountUI> | null = null;
@@ -41,7 +83,7 @@ function ensureGame(): void {
       s.onAction = (pid, a) => doAction(pid, a);
       s.setState(state);
     }
-    ui?.update(state);
+    ui?.update(state, revertEnabledFor());
   });
   ui = mountUI({
     onGrab: (pid) => {
@@ -57,18 +99,21 @@ function ensureGame(): void {
       doAction(pid, { kind: 'drop', pieceId: id });
     },
     onEndTurn: (pid) => doAction(pid, { kind: 'endTurn' }),
+    onRevert: (pid) => doRevert(pid),
     onNewBoard: () => {
       state = createStateFromConfig(config, Math.random);
+      takeSnapshot();
       scene()?.clearSelection();
       ui?.setStatus('New board dealt');
       refresh();
     },
   });
-  ui.update(state);
+  takeSnapshot();
+  ui.update(state, revertEnabledFor());
 }
 
 function refresh(): void {
-  ui?.update(state);
+  ui?.update(state, revertEnabledFor());
   scene()?.setState(state);
 }
 
@@ -79,9 +124,15 @@ function doAction(playerId: string, action: Action): void {
   const v = validateMove(state, playerId, action);
   if (!v.ok) {
     ui?.setStatus(`Invalid: ${v.reason}`);
+    refresh();
     return;
   }
   state = applyMove(state, playerId, action);
+  if (action.kind === 'endTurn') {
+    takeSnapshot();
+  } else {
+    turnDirty = true;
+  }
   // Keep the piece selected while an arrow chain is pending so the
   // player can click the continuation dest same turn. Also keep it on
   // grab (including selection auto-grab) so the player can move next.
@@ -89,6 +140,42 @@ function doAction(playerId: string, action: Action): void {
     scene()?.clearSelection();
   }
   ui?.setStatus('OK');
+  refresh();
+}
+
+function doRevert(playerId: string): void {
+  if (isFreeTest() && state.players[playerId]) {
+    state.currentTurn = playerId;
+  }
+  if (!turnStartSnapshot) {
+    ui?.setStatus('Nothing to revert');
+    refresh();
+    return;
+  }
+  if (state.status !== 'running') {
+    ui?.setStatus('Cannot revert: game finished');
+    refresh();
+    return;
+  }
+  if (state.currentTurn !== playerId) {
+    ui?.setStatus('Cannot revert: not your turn');
+    refresh();
+    return;
+  }
+  if (!turnDirty) {
+    ui?.setStatus('Nothing to revert');
+    refresh();
+    return;
+  }
+  if (hasDiscoveredSince(turnStartSnapshot, state)) {
+    ui?.setStatus('Cannot revert after discovering a card');
+    refresh();
+    return;
+  }
+  state = cloneState(turnStartSnapshot);
+  turnDirty = false;
+  scene()?.clearSelection();
+  ui?.setStatus('Turn reverted');
   refresh();
 }
 
@@ -179,7 +266,11 @@ function bindMenu(): void {
       return;
     }
     state = createStateFromConfig(config, Math.random);
+    takeSnapshot();
     ensureGame();
+    // ensureGame early-returns when a game already exists, so refresh the
+    // snapshot here too (same state, idempotent on first start).
+    takeSnapshot();
     showView('game');
     scene()?.clearSelection();
     ui?.setStatus('Local game started');
