@@ -38,10 +38,12 @@ export function mountUI(h: UIHandlers) {
       for (const pid of ids) {
         const div = document.createElement('div');
         div.id = `${pid}panel`;
+        div.className = 'player-panel';
         const strong = document.createElement('strong');
         strong.textContent = pid.toUpperCase();
         div.appendChild(strong);
-        div.appendChild(document.createTextNode(' '));
+        const col = document.createElement('div');
+        col.className = 'player-buttons';
         const grab = document.createElement('button');
         grab.id = `${pid}Grab`;
         grab.textContent = 'Grab';
@@ -59,7 +61,16 @@ export function mountUI(h: UIHandlers) {
         revert.textContent = 'Revert';
         revert.title = 'Undo this turn (disabled after discovering a card)';
         revert.onclick = () => h.onRevert(pid);
-        div.append(grab, drop, end, revert);
+        col.append(grab, drop, end, revert);
+        const autoLabel = document.createElement('label');
+        autoLabel.className = 'auto-grab';
+        const auto = document.createElement('input');
+        auto.type = 'checkbox';
+        auto.id = `${pid}AutoGrab`;
+        auto.checked = true;
+        autoLabel.append(auto, document.createTextNode(' Auto grab'));
+        col.appendChild(autoLabel);
+        div.appendChild(col);
         panels.appendChild(div);
       }
     }

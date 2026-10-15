@@ -1,9 +1,9 @@
 // Wiring only: local hot-seat state + Phaser + UI. All rules live in core/.
 import Phaser from 'phaser';
 import { createStateFromConfig, defaultGameConfig, validateConfig } from './core/setup';
-import { applyMove, coinsOnCard, parseTrapCost, validateMove } from './core/rules';
+import { applyMove, validateMove } from './core/rules';
 import type { Action, CardType, Edge, GameConfig, GameState } from './core/types';
-import { CARD_TYPES, cardKey } from './core/types';
+import { CARD_TYPES } from './core/types';
 import { makeGameConfig } from './game/config';
 import { GameScene } from './game/GameScene';
 import './style.css';
@@ -88,14 +88,14 @@ function ensureGame(): void {
   ui = mountUI({
     onGrab: (pid) => {
       const sel = scene()?.getSelected();
-      const id = sel && sel.playerId === pid ? sel.pieceId : findGrabbable(pid);
-      if (!id) return ui?.setStatus('Select a piece on coins first (click it)');
+      const id = sel && sel.playerId === pid ? sel.pieceId : null;
+      if (!id) return ui?.setStatus('Select a piece first (click it)');
       doAction(pid, { kind: 'grab', pieceId: id });
     },
     onDrop: (pid) => {
       const sel = scene()?.getSelected();
-      const id = sel && sel.playerId === pid ? sel.pieceId : findCarrying(pid);
-      if (!id) return ui?.setStatus('Select a carrying piece first');
+      const id = sel && sel.playerId === pid ? sel.pieceId : null;
+      if (!id) return ui?.setStatus('Select a piece first (click it)');
       doAction(pid, { kind: 'drop', pieceId: id });
     },
     onEndTurn: (pid) => doAction(pid, { kind: 'endTurn' }),
@@ -133,10 +133,10 @@ function doAction(playerId: string, action: Action): void {
   } else {
     turnDirty = true;
   }
-  // Keep the piece selected while an arrow chain is pending so the
-  // player can click the continuation dest same turn. Also keep it on
-  // grab (including selection auto-grab) so the player can move next.
-  if (!state.pendingArrow && action.kind !== 'grab') {
+  // Keep the piece selected on grab/drop (explicit buttons never deselect)
+  // and while an arrow chain is pending so the player can click the
+  // continuation dest same turn.
+  if (!state.pendingArrow && action.kind !== 'grab' && action.kind !== 'drop') {
     scene()?.clearSelection();
   }
   ui?.setStatus('OK');
@@ -177,26 +177,6 @@ function doRevert(playerId: string): void {
   scene()?.clearSelection();
   ui?.setStatus('Turn reverted');
   refresh();
-}
-
-function findGrabbable(playerId: string): string | null {
-  for (const p of Object.values(state.pieces)) {
-    if (p.playerId !== playerId || p.onShip || p.carrying) continue;
-    const card = state.cards[cardKey(p.x, p.y)];
-    if (card && card.faceUp && card.type.startsWith('trap_')) {
-      const n = parseTrapCost(card.type);
-      if ((p.trapStep ?? 0) !== n) continue;
-    }
-    if (coinsOnCard(state, p.x, p.y) > 0) return p.id;
-  }
-  return null;
-}
-
-function findCarrying(playerId: string): string | null {
-  for (const p of Object.values(state.pieces)) {
-    if (p.playerId === playerId && p.carrying) return p.id;
-  }
-  return null;
 }
 
 // ---- settings form ----

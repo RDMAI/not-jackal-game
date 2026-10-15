@@ -133,24 +133,6 @@ export function canAutoGrab(state: GameState, pieceId: string): boolean {
   return true;
 }
 
-/**
- * True when deselecting a piece should auto-drop its coin (drop by default).
- * Mirrors an explicit `drop`: the current player's carrying piece, on land
- * (returns to the card pile) or on its own ship cell (scores).
- */
-export function canAutoDrop(state: GameState, pieceId: string): boolean {
-  const piece = state.pieces[pieceId];
-  if (!piece) return false;
-  if (state.status !== 'running') return false;
-  if (state.currentTurn !== piece.playerId) return false;
-  if (!piece.carrying) return false;
-  if (piece.onShip) {
-    return isOwnShipCell(state, piece.playerId, piece.x, piece.y);
-  }
-  if (isSea(state, piece.x, piece.y)) return false;
-  return true;
-}
-
 function isArrowCard(type: CardType): boolean {
   return type.startsWith('arrow_');
 }

@@ -10,7 +10,6 @@ import {
 } from './core/setup';
 import {
   applyMove,
-  canAutoDrop,
   canAutoGrab,
   isSea,
   parseArrowExits,
@@ -268,35 +267,6 @@ describe('rules', () => {
     expect(canAutoGrab(t, 'p1_0')).toBe(false);
     const tLast = { ...t, pieces: { ...t.pieces, p1_0: { ...t.pieces['p1_0'], trapStep: 3 } } };
     expect(canAutoGrab(tLast, 'p1_0')).toBe(true);
-  });
-
-  it('canAutoDrop: deselecting a grabbed piece drops it back', () => {
-    const s = runningState();
-    s.pieces['p1_0'].onShip = false;
-    s.pieces['p1_0'].x = 2;
-    s.pieces['p1_0'].y = 2;
-    s.cards['2_2'] = { type: 'chest_3', faceUp: true, coinsOnGround: 2 };
-    // Not carrying -> no auto-drop.
-    expect(canAutoDrop(s, 'p1_0')).toBe(false);
-    // Select-grab then deselect-drop is a no-op (2 -> 1 -> 2).
-    const grabbed = applyMove(s, 'p1', { kind: 'grab', pieceId: 'p1_0' });
-    expect(grabbed.pieces['p1_0'].carrying).toBe(true);
-    expect(grabbed.cards['2_2'].coinsOnGround).toBe(1);
-    expect(canAutoDrop(grabbed, 'p1_0')).toBe(true);
-    const dropped = applyMove(grabbed, 'p1', { kind: 'drop', pieceId: 'p1_0' });
-    expect(dropped.pieces['p1_0'].carrying).toBe(false);
-    expect(dropped.cards['2_2'].coinsOnGround).toBe(2);
-    expect(canAutoDrop(dropped, 'p1_0')).toBe(false);
-    // Wrong turn -> no auto-drop.
-    const notTurn = { ...grabbed, currentTurn: 'p2' };
-    expect(canAutoDrop(notTurn, 'p1_0')).toBe(false);
-    // Carrying on own ship -> auto-drop scores.
-    const ship = runningState();
-    ship.pieces['p1_0'].x = 2;
-    ship.pieces['p1_0'].y = -1;
-    ship.pieces['p1_0'].onShip = true;
-    ship.pieces['p1_0'].carrying = true;
-    expect(canAutoDrop(ship, 'p1_0')).toBe(true);
   });
 
   it('arrow landing chains: pendingArrow set, continue same turn along exits', () => {
