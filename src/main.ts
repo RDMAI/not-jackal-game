@@ -1,194 +1,271 @@
-import { initializeApp } from 'firebase/app';
-import {
-  getDatabase,
-  ref,
-  set,
-  get,
-  onValue,
-  type Database,
-  type Unsubscribe,
-} from 'firebase/database';
+// Wiring only: local hot-seat state + Phaser + UI. All rules live in core/.
+import Phaser from 'phaser';
+import { createStateFromConfig, defaultGameConfig, validateConfig } from './core/setup';
+import { applyMove, validateMove } from './core/rules';
+import type { Action, CardType, Edge, GameConfig, GameState } from './core/types';
+import { CARD_TYPES } from './core/types';
+import { makeGameConfig } from './game/config';
+import { GameScene } from './game/GameScene';
 import './style.css';
+import { isFreeTest, mountUI } from './ui';
 
-// 0 = green, 1 = blue
-type CellValue = 0 | 1;
-type BoardState = CellValue[][];
+let config: GameConfig = defaultGameConfig();
+let state = createStateFromConfig(config, Math.random);
 
-interface RoomData {
-  board_state?: BoardState | null;
-  board_size_x?: number;
-  board_size_y?: number;
-  [key: string]: unknown;
+// Turn-start snapshot for full-turn revert (Firebase-ready: plain JSON clone).
+// Refreshed only on turn boundaries / new game, never after mid-turn actions.
+let turnStartSnapshot: GameState | null = null;
+let turnDirty = false;
+
+function cloneState(s: GameState): GameState {
+  return JSON.parse(JSON.stringify(s)) as GameState;
 }
 
-const firebaseConfig = {
-  apiKey: 'AIzaSyARAjRjKBpRP9h1hIccJ_n1iqbON-vaHgs',
-  authDomain: 'family-board-games-54639.firebaseapp.com',
-  projectId: 'family-board-games-54639',
-  storageBucket: 'family-board-games-54639.firebasestorage.app',
-  messagingSenderId: '557276950036',
-  appId: '1:557276950036:web:edac4d1cafc69480970101',
-  databaseURL:
-    'https://family-board-games-54639-default-rtdb.europe-west1.firebasedatabase.app/',
-};
+function takeSnapshot(): void {
+  turnStartSnapshot = cloneState(state);
+  turnDirty = false;
+}
 
-const app = initializeApp(firebaseConfig);
-const db: Database = getDatabase(app);
-
-let gridState: BoardState = [];
-let cells: HTMLTableCellElement[][] = [];
-let currentRoomId: string | null = null;
-let unsubscribe: Unsubscribe | null = null;
-
-function getElement<T extends HTMLElement>(id: string): T {
-  const el = document.getElementById(id);
-  if (!el) {
-    throw new Error(`Missing element: #${id}`);
+/** True if any card flipped face-down -> face-up since the snapshot. */
+export function hasDiscoveredSince(snap: GameState | null, cur: GameState): boolean {
+  if (!snap) return false;
+  for (const key of Object.keys(cur.cards)) {
+    const before = snap.cards[key];
+    const after = cur.cards[key];
+    if (after?.faceUp && !before?.faceUp) return true;
   }
-  return el as T;
+  return false;
 }
 
-const table = getElement<HTMLTableElement>('grid');
-const sendBtn = getElement<HTMLButtonElement>('sendBtn');
-const statusEl = getElement<HTMLParagraphElement>('status');
-const changesField = getElement<HTMLTextAreaElement>('changes');
-const roomError = getElement<HTMLParagraphElement>('roomError');
-const roomIdInput = getElement<HTMLInputElement>('roomIdInput');
-const joinBtn = getElement<HTMLButtonElement>('joinBtn');
-
-function normalizeCell(value: unknown): CellValue {
-  return value === 1 ? 1 : 0;
+function canRevert(playerId: string): boolean {
+  if (!turnStartSnapshot) return false;
+  if (state.status !== 'running') return false;
+  if (state.currentTurn !== playerId) return false;
+  if (!turnDirty) return false;
+  if (hasDiscoveredSince(turnStartSnapshot, state)) return false;
+  return true;
 }
 
-function buildBoard(rows: number, cols: number, initial?: BoardState | null): void {
-  table.innerHTML = '';
-  cells = [];
-  gridState = Array.from({ length: rows }, (_, r) =>
-    Array.from({ length: cols }, (_, c) => normalizeCell(initial?.[r]?.[c])),
-  );
-
-  for (let r = 0; r < rows; r++) {
-    const tr = document.createElement('tr');
-    const rowCells: HTMLTableCellElement[] = [];
-    for (let c = 0; c < cols; c++) {
-      const td = document.createElement('td');
-      if (gridState[r][c] === 1) {
-        td.classList.add('blue');
-      }
-      td.addEventListener('click', () => {
-        gridState[r][c] = gridState[r][c] === 0 ? 1 : 0;
-        td.classList.toggle('blue', gridState[r][c] === 1);
-      });
-      tr.appendChild(td);
-      rowCells.push(td);
-    }
-    table.appendChild(tr);
-    cells.push(rowCells);
+function revertEnabledFor(): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const pid of Object.keys(state.players)) {
+    out[pid] = canRevert(pid);
   }
+  return out;
 }
 
-function renderBoard(): void {
-  for (let r = 0; r < gridState.length; r++) {
-    for (let c = 0; c < gridState[r].length; c++) {
-      cells[r][c].classList.toggle('blue', gridState[r][c] === 1);
-    }
-  }
+let game: Phaser.Game | null = null;
+let ui: ReturnType<typeof mountUI> | null = null;
+
+function el<T extends HTMLElement>(id: string): T {
+  const e = document.getElementById(id);
+  if (!e) throw new Error(`Missing element: #${id}`);
+  return e as T;
 }
 
-function setBoardVisible(visible: boolean): void {
-  const display = visible ? '' : 'none';
-  table.style.display = display;
-  sendBtn.style.display = display;
-  statusEl.style.display = display;
-  changesField.style.display = display;
+function scene(): GameScene | null {
+  if (!game) return null;
+  return game.scene.getScene('game') as GameScene;
 }
 
-function subscribeToRoom(roomId: string): void {
-  if (unsubscribe) {
-    unsubscribe();
-    unsubscribe = null;
-  }
+function showView(name: 'menu' | 'settings' | 'game'): void {
+  el('menuView').hidden = name !== 'menu';
+  el('settingsView').hidden = name !== 'settings';
+  el('gameView').hidden = name !== 'game';
+}
 
-  const boardRef = ref(db, `rooms/${roomId}/board_state`);
-  unsubscribe = onValue(boardRef, (snapshot) => {
-    const remote = snapshot.val() as BoardState | null;
-    if (!remote) return;
-
-    const diffs: string[] = [];
-    for (let r = 0; r < remote.length; r++) {
-      for (let c = 0; c < (remote[r]?.length ?? 0); c++) {
-        const localVal: CellValue = gridState[r]?.[c] ?? 0;
-        const remoteVal: CellValue = normalizeCell(remote[r]?.[c]);
-        if (localVal !== remoteVal) {
-          diffs.push(`[${r},${c}]: ${localVal} -> ${remoteVal}`);
-        }
-      }
+function ensureGame(): void {
+  if (game) return;
+  game = new Phaser.Game(makeGameConfig());
+  game.events.on('ready', () => {
+    const s = scene();
+    if (s) {
+      s.onAction = (pid, a) => doAction(pid, a);
+      s.setState(state);
     }
-
-    if (diffs.length > 0) {
-      changesField.value += (changesField.value ? '\n' : '') + diffs.join('\n');
-      changesField.scrollTop = changesField.scrollHeight;
-    }
-
-    // Resize if remote size differs
-    if (
-      remote.length !== gridState.length ||
-      (remote[0]?.length ?? 0) !== (gridState[0]?.length ?? 0)
-    ) {
-      buildBoard(remote.length, remote[0].length, remote);
-    } else {
-      for (let r = 0; r < remote.length; r++) {
-        for (let c = 0; c < remote[r].length; c++) {
-          gridState[r][c] = normalizeCell(remote[r][c]);
-        }
-      }
-      renderBoard();
-    }
+    ui?.update(state, revertEnabledFor());
   });
+  ui = mountUI({
+    onGrab: (pid) => {
+      const sel = scene()?.getSelected();
+      const id = sel && sel.playerId === pid ? sel.pieceId : null;
+      if (!id) return ui?.setStatus('Select a piece first (click it)');
+      doAction(pid, { kind: 'grab', pieceId: id });
+    },
+    onDrop: (pid) => {
+      const sel = scene()?.getSelected();
+      const id = sel && sel.playerId === pid ? sel.pieceId : null;
+      if (!id) return ui?.setStatus('Select a piece first (click it)');
+      doAction(pid, { kind: 'drop', pieceId: id });
+    },
+    onEndTurn: (pid) => doAction(pid, { kind: 'endTurn' }),
+    onRevert: (pid) => doRevert(pid),
+    onNewBoard: () => {
+      state = createStateFromConfig(config, Math.random);
+      takeSnapshot();
+      scene()?.clearSelection();
+      ui?.setStatus('New board dealt');
+      refresh();
+    },
+  });
+  takeSnapshot();
+  ui.update(state, revertEnabledFor());
 }
 
-joinBtn.addEventListener('click', async () => {
-  const roomId = roomIdInput.value.trim();
-  if (!roomId) {
-    roomError.textContent = 'invalid id';
-    setBoardVisible(false);
+function refresh(): void {
+  ui?.update(state, revertEnabledFor());
+  scene()?.setState(state);
+}
+
+function doAction(playerId: string, action: Action): void {
+  if (isFreeTest() && state.players[playerId]) {
+    state.currentTurn = playerId;
+  }
+  const v = validateMove(state, playerId, action);
+  if (!v.ok) {
+    ui?.setStatus(`Invalid: ${v.reason}`);
+    refresh();
     return;
   }
+  state = applyMove(state, playerId, action);
+  if (action.kind === 'endTurn') {
+    takeSnapshot();
+  } else {
+    turnDirty = true;
+  }
+  // Keep the piece selected on grab/drop (explicit buttons never deselect)
+  // and while an arrow chain is pending so the player can click the
+  // continuation dest same turn.
+  if (!state.pendingArrow && action.kind !== 'grab' && action.kind !== 'drop') {
+    scene()?.clearSelection();
+  }
+  ui?.setStatus('OK');
+  refresh();
+}
 
-  try {
-    const roomSnap = await get(ref(db, `rooms/${roomId}`));
-    const room = roomSnap.val() as RoomData | null;
-    if (!roomSnap.exists() || room?.board_state == null) {
-      roomError.textContent = 'invalid id';
-      setBoardVisible(false);
+function doRevert(playerId: string): void {
+  if (isFreeTest() && state.players[playerId]) {
+    state.currentTurn = playerId;
+  }
+  if (!turnStartSnapshot) {
+    ui?.setStatus('Nothing to revert');
+    refresh();
+    return;
+  }
+  if (state.status !== 'running') {
+    ui?.setStatus('Cannot revert: game finished');
+    refresh();
+    return;
+  }
+  if (state.currentTurn !== playerId) {
+    ui?.setStatus('Cannot revert: not your turn');
+    refresh();
+    return;
+  }
+  if (!turnDirty) {
+    ui?.setStatus('Nothing to revert');
+    refresh();
+    return;
+  }
+  if (hasDiscoveredSince(turnStartSnapshot, state)) {
+    ui?.setStatus('Cannot revert after discovering a card');
+    refresh();
+    return;
+  }
+  state = cloneState(turnStartSnapshot);
+  turnDirty = false;
+  scene()?.clearSelection();
+  ui?.setStatus('Turn reverted');
+  refresh();
+}
+
+// ---- settings form ----
+
+function readConfigFromForm(): GameConfig {
+  const num = (id: string, fallback: number): number => {
+    const e = document.getElementById(id) as HTMLInputElement | null;
+    const n = e ? Number(e.value) : fallback;
+    return Number.isFinite(n) ? Math.floor(n) : fallback;
+  };
+  let fx = num('cfgSizeX', 5);
+  let fy = num('cfgSizeY', 5);
+  fx = Math.min(9, Math.max(3, fx));
+  fy = Math.min(9, Math.max(3, fy));
+  const deckCounts = {} as Record<CardType, number>;
+  for (const t of CARD_TYPES) {
+    deckCounts[t] = Math.max(0, num(`cfg_${t}`, 0));
+  }
+  const edges: Edge[] = [];
+  if ((document.getElementById('edge_north') as HTMLInputElement | null)?.checked) edges.push('north');
+  if ((document.getElementById('edge_south') as HTMLInputElement | null)?.checked) edges.push('south');
+  if ((document.getElementById('edge_west') as HTMLInputElement | null)?.checked) edges.push('west');
+  if ((document.getElementById('edge_east') as HTMLInputElement | null)?.checked) edges.push('east');
+  return { fieldSizeX: fx, fieldSizeY: fy, deckCounts, edges };
+}
+
+function refreshSettingsValidation(): void {
+  const c = readConfigFromForm();
+  const v = validateConfig(c);
+  const err = el('cfgError');
+  const cont = el<HTMLButtonElement>('settingsContinueBtn');
+  const fixed = el('cfgFixed');
+  const chest = c.deckCounts['chest_3'] ?? 0;
+  fixed.textContent =
+    `3 pieces/player, ship in the middle per edge, total coins ${chest * 3}.`;
+  if (v.ok) {
+    err.textContent = `${v.assigned}/${v.expected} cards assigned — ready.`;
+    cont.disabled = false;
+  } else {
+    err.textContent = v.reason ?? 'invalid config';
+    cont.disabled = true;
+  }
+}
+
+function bindMenu(): void {
+  el('joinBtn').onclick = () => {
+    el('joinPane').hidden = false;
+    el('testPane').hidden = true;
+  };
+  el('testBtn').onclick = () => {
+    el('testPane').hidden = false;
+    el('joinPane').hidden = true;
+  };
+  el('joinGoBtn').onclick = () => {
+    el('joinPane').hidden = false;
+  };
+  el('createLocalBtn').onclick = () => {
+    showView('settings');
+    refreshSettingsValidation();
+  };
+  el('settingsBackBtn').onclick = () => showView('menu');
+  el('settingsContinueBtn').onclick = () => {
+    config = readConfigFromForm();
+    const v = validateConfig(config);
+    if (!v.ok) {
+      refreshSettingsValidation();
       return;
     }
+    state = createStateFromConfig(config, Math.random);
+    takeSnapshot();
+    ensureGame();
+    // ensureGame early-returns when a game already exists, so refresh the
+    // snapshot here too (same state, idempotent on first start).
+    takeSnapshot();
+    showView('game');
+    scene()?.clearSelection();
+    ui?.setStatus('Local game started');
+    refresh();
+  };
+  el('quitToMenuBtn').onclick = () => showView('menu');
 
-    const boardState = room.board_state as BoardState;
-    const sizeY = room.board_size_y ?? boardState.length;
-    const sizeX = room.board_size_x ?? boardState[0].length;
-
-    currentRoomId = roomId;
-    roomError.textContent = '';
-    changesField.value = '';
-    statusEl.textContent = '';
-    buildBoard(sizeY, sizeX, boardState);
-    setBoardVisible(true);
-    subscribeToRoom(roomId);
-  } catch (e) {
-    console.error(e);
-    roomError.textContent = 'invalid id';
-    setBoardVisible(false);
+  for (const id of ['cfgSizeX', 'cfgSizeY', ...CARD_TYPES.map((t) => `cfg_${t}`)]) {
+    const input = document.getElementById(id);
+    input?.addEventListener('input', refreshSettingsValidation);
   }
-});
-
-sendBtn.addEventListener('click', async () => {
-  if (!currentRoomId) return;
-  try {
-    await set(ref(db, `rooms/${currentRoomId}/board_state`), gridState);
-    statusEl.textContent = 'Board sent!';
-  } catch (e) {
-    console.error(e);
-    statusEl.textContent = `Failed: ${(e as Error).message}`;
+  for (const id of ['edge_north', 'edge_south', 'edge_west', 'edge_east']) {
+    document.getElementById(id)?.addEventListener('change', refreshSettingsValidation);
   }
-});
+}
+
+bindMenu();
+showView('menu');
