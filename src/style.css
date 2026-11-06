@@ -156,3 +156,95 @@ button {
   max-width: 100%;
   height: auto;
 }
+
+/* ---- online / lobby ---- */
+
+#menuView, #settingsView, #lobbyView, #gameView {
+  margin-top: 12px;
+}
+
+.player-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid #444;
+  border-radius: 8px;
+  background: #141b33;
+  max-width: 420px;
+}
+
+.player-selection label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.player-selection select {
+  min-width: 180px;
+  padding: 4px;
+}
+
+.room-error {
+  color: #ff9a9a;
+}
+
+.lobby-players {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+  max-width: 420px;
+}
+
+.lobby-player {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid #444;
+  border-radius: 8px;
+  background: #141b33;
+}
+
+.lobby-player.joined {
+  border-color: #3f7d4e;
+}
+
+.lobby-player.open {
+  border-style: dashed;
+  color: #bbb;
+}
+
+.lobby-player .you-tag {
+  color: gold;
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.winner-banner {
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 1.35em;
+  font-weight: 700;
+  text-align: center;
+  background: #1c2440;
+  border: 2px solid #666;
+}
+
+.winner-banner.win {
+  color: gold;
+  border-color: gold;
+}
+
+.winner-banner.tie {
+  color: #ffe27a;
+  border-color: #ffe27a;
+}
+

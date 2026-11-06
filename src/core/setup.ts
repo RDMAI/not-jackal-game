@@ -175,7 +175,7 @@ export function createInitialState(
     const edge = (opts.edges && opts.edges[order]) ?? edgeForOrder(order);
     const along = edge === 'north' || edge === 'south' ? fieldSizeX : fieldSizeY;
     const shipPos = Math.floor(along / 2);
-    players[id] = { id, edge, shipPos, order, score: 0 };
+    players[id] = { id, edge, shipPos, order, score: 0, joined: true };
     const ship = shipCellFor(edge, shipPos, fieldSizeX, fieldSizeY);
     for (let i = 0; i < PIECES_PER_PLAYER; i++) {
       const pid = `${id}_${i}`;
@@ -203,6 +203,7 @@ export function createInitialState(
     players,
     pieces,
     cards,
+    turnsPassed: 0,
     lastMove: null,
     winner: null,
   };

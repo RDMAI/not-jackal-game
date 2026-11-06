@@ -332,15 +332,10 @@ function checkWin(next: GameState): void {
   const scored = Object.values(next.players).reduce((sum, p) => sum + p.score, 0);
   if (scored >= next.totalCoins) {
     next.status = 'finished';
-    let best: string | null = null;
-    let bestScore = -1;
-    for (const p of Object.values(next.players)) {
-      if (p.score > bestScore) {
-        bestScore = p.score;
-        best = p.id;
-      }
-    }
-    next.winner = best;
+    const players = Object.values(next.players);
+    const maxScore = Math.max(...players.map((p) => p.score));
+    const winners = players.filter((p) => p.score === maxScore);
+    next.winner = winners.length > 1 ? 'tie' : (winners[0]?.id ?? null);
   }
 }
 
@@ -396,6 +391,7 @@ export function applyMove(state: GameState, playerId: string, action: Action): G
         }
       }
       checkWin(next);
+      next.turnsPassed = (next.turnsPassed ?? 0) + 1;
       // Trap progress advances only via advanceTrap; endTurn ticks nothing.
       next.moved = false;
       next.pendingArrow = null;

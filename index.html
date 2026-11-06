@@ -17,8 +17,15 @@
       </div>
       <div id="joinPane" hidden>
         <label>Room ID <input id="roomIdInput" type="text" placeholder="room id" /></label>
-        <button id="joinGoBtn">Join room</button>
-        <p class="hint">Online join coming soon — local only for now.</p>
+        <button id="findRoomBtn">Find room</button>
+        <p id="joinStatus" class="hint"></p>
+        <div id="playerSelection" class="player-selection" hidden>
+          <label>Player slot <select id="playerSelect"></select></label>
+          <div class="menu-row">
+            <button id="claimPlayerBtn">Claim slot</button>
+            <button id="retryClaimBtn" hidden>Retry claim</button>
+          </div>
+        </div>
       </div>
       <div id="testPane" hidden>
         <p class="hint">Test page not implemented.</p>
@@ -56,19 +63,32 @@
       </div>
     </section>
 
+    <section id="lobbyView" hidden>
+      <h2>Lobby</h2>
+      <p class="hint">Room: <strong id="lobbyRoomId"></strong></p>
+      <p id="lobbyYou" class="hint"></p>
+      <div id="lobbyPlayers" class="lobby-players"></div>
+      <p id="lobbyStatus" class="hint"></p>
+      <div class="menu-row">
+        <button id="lobbyStartBtn">Start game</button>
+        <button id="lobbyLeaveBtn">Leave</button>
+      </div>
+    </section>
+
     <section id="gameView" hidden>
       <button id="quitToMenuBtn">Quit to menu</button>
       <div id="layout">
         <aside id="sidebar">
           <div id="hud">
             <button id="newBoardBtn">New board (shuffle)</button>
-            <label><input type="checkbox" id="freeTest" /> Free test (ignore turns)</label>
+            <label id="freeTestLabel"><input type="checkbox" id="freeTest" /> Free test (ignore turns)</label>
             <div id="playerPanels"></div>
             <p id="status"></p>
           </div>
         </aside>
         <main id="boardPane">
           <div id="scoreBoard">
+            <div id="winnerBanner" class="winner-banner" hidden></div>
             <p id="turnLabel"></p>
             <div id="scores"></div>
           </div>
