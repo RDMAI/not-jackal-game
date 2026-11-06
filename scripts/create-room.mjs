@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const ROOM_VERSION = 1;
-const FIELD_SIZE = 5;
+const FIELD_SIZE = 9;
 const PIECES_PER_PLAYER = 3;
 const CHEST_COINS = 3;
 const MIN_FIELD = 3;
@@ -19,9 +19,14 @@ const CARD_TYPES = [
   'arrow_0_4',
   'arrow_1_5',
   'arrow_1_3_5_7',
+  'chest_1',
+  'chest_2',
   'chest_3',
+  'chest_4',
+  'chest_5',
   'trap_2',
   'trap_3',
+  'trap_4'
 ];
 const EDGES = ['north', 'south', 'east', 'west'];
 const INVALID_ROOM_ID_CHARS = /[/.#$[\]]/;
@@ -42,13 +47,18 @@ function isValidRoomId(id) {
 
 function defaultDeckCounts() {
   return {
-    empty: 11,
-    arrow_0_4: 2,
-    arrow_1_5: 2,
-    arrow_1_3_5_7: 1,
-    chest_3: 4,
+    empty: 47,
+    arrow_0_4: 5,
+    arrow_1_5: 5,
+    arrow_1_3_5_7: 3,
+    chest_1: 5,
+    chest_2: 4,
+    chest_3: 3,
+    chest_4: 2,
+    chest_5: 1,
     trap_2: 3,
     trap_3: 2,
+    trap_4: 1,
   };
 }
 

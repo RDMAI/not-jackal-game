@@ -10,9 +10,14 @@ export type CardType =
   | 'arrow_0_4'
   | 'arrow_1_5'
   | 'arrow_1_3_5_7'
+  | 'chest_1'
+  | 'chest_2'
   | 'chest_3'
+  | 'chest_4'
+  | 'chest_5'
   | 'trap_2'
-  | 'trap_3';
+  | 'trap_3'
+  | 'trap_4';
 
 export interface Card {
   type: CardType;
@@ -85,9 +90,14 @@ export const CARD_TYPES: CardType[] = [
   'arrow_0_4',
   'arrow_1_5',
   'arrow_1_3_5_7',
+  'chest_1',
+  'chest_2',
   'chest_3',
+  'chest_4',
+  'chest_5',
   'trap_2',
   'trap_3',
+  'trap_4'
 ];
 
 export interface GameConfig {
