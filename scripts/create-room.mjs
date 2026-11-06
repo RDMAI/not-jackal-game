@@ -108,7 +108,7 @@ function defaultConfig() {
   return {
     fieldSizeX: FIELD_SIZE,
     fieldSizeY: FIELD_SIZE,
-    deckCounts: defaultDeckCounts(),
+    deckCounts: defaultDeckCounts(FIELD_SIZE, FIELD_SIZE),
     edges: ['north', 'south'],
   };
 }
