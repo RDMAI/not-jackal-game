@@ -28,6 +28,8 @@ function autoGrabEnabled(playerId: string): boolean {
 export class GameScene extends Phaser.Scene {
   private state: GameState | null = null;
   private selected: { playerId: string; pieceId: string } | null = null;
+  /** null = local hot-seat; non-null = online, only this player may interact. */
+  private onlinePlayerId: string | null = null;
   /** called by main.ts: (playerId, action) -> validate + apply */
   public onAction: (playerId: string, a: Action) => void = () => {};
 
@@ -37,10 +39,18 @@ export class GameScene extends Phaser.Scene {
 
   setState(s: GameState | null): void {
     this.state = s;
-    // Clear stale selection if piece moved away.
-    if (s && this.selected && !s.pieces[this.selected.pieceId]) {
+    if (s && this.onlinePlayerId && (s.status !== 'running' || s.currentTurn !== this.onlinePlayerId)) {
+      this.selected = null;
+    } else if (s && this.selected && !s.pieces[this.selected.pieceId]) {
+      // Clear stale selection if piece moved away.
       this.selected = null;
     }
+    this.render();
+  }
+
+  setOnlinePlayerId(playerId: string | null): void {
+    this.onlinePlayerId = playerId;
+    this.selected = null;
     this.render();
   }
 
@@ -55,6 +65,13 @@ export class GameScene extends Phaser.Scene {
   clearSelection(): void {
     this.selected = null;
     this.render();
+  }
+
+  private canInteract(): boolean {
+    const s = this.state;
+    if (!s) return false;
+    if (!this.onlinePlayerId) return true;
+    return s.status === 'running' && s.currentTurn === this.onlinePlayerId;
   }
 
   private cellSize(): number {
@@ -318,9 +335,10 @@ export class GameScene extends Phaser.Scene {
 
   private handlePieceClick(pieceId: string): void {
     const s = this.state;
-    if (!s) return;
+    if (!s || !this.canInteract()) return;
     const piece = s.pieces[pieceId];
     if (!piece) return;
+    if (this.onlinePlayerId && piece.playerId !== this.onlinePlayerId) return;
     // Clicking the selected piece again just deselects. Carrying persists
     // until an explicit Drop or endTurn (no auto-drop on deselect).
     if (this.selected?.pieceId === pieceId) {
@@ -341,7 +359,7 @@ export class GameScene extends Phaser.Scene {
 
   private handleCellClick(x: number, y: number): void {
     const s = this.state;
-    if (!s) return;
+    if (!s || !this.canInteract()) return;
 
     // 1. If a piece is selected and dest clicked -> movePiece, or
     //    piece-on-ship + strictly adjacent sea cell -> moveShip, or
@@ -395,6 +413,7 @@ export class GameScene extends Phaser.Scene {
     // 2. Clicking a piece stack selects the top piece there (auto-grab gated).
     const stack = Object.values(s.pieces).find((p) => p.x === x && p.y === y);
     if (stack) {
+      if (this.onlinePlayerId && stack.playerId !== this.onlinePlayerId) return;
       if (this.selected?.pieceId === stack.id) {
         this.selected = null;
         this.render();

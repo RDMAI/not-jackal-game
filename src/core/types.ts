@@ -38,6 +38,8 @@ export interface Player {
   shipPos: number;
   order: number;
   score: number;
+  /** Slot claimed in the lobby. Not online presence; lobby metadata only. */
+  joined: boolean;
 }
 
 export type GameStatus = 'lobby' | 'running' | 'finished';
@@ -63,7 +65,10 @@ export interface GameState {
   pieces: Record<string, Piece>;
   /** key `${x}_${y}`, field cells only (0..fieldSize-1) */
   cards: Record<string, Card>;
+  /** number of completed turns; persisted but not displayed this iteration */
+  turnsPassed: number;
   lastMove?: LastMove | null;
+  /** Player id, or the sentinel `"tie"` when the game ends level. */
   winner?: string | null;
 }
 
@@ -101,4 +106,13 @@ export interface ConfigValidation {
 
 export function cardKey(x: number, y: number): string {
   return `${x}_${y}`;
+}
+
+/** Current room document schema version. Keep in sync with scripts/create-room.mjs. */
+export const ROOM_VERSION = 1;
+
+export interface RoomDoc {
+  version: number;
+  config: GameConfig;
+  state: GameState;
 }
