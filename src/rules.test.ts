@@ -513,9 +513,14 @@ describe('config', () => {
       arrow_0_4: 1,
       arrow_1_5: 1,
       arrow_1_3_5_7: 1,
+      chest_1: 0,
+      chest_2: 0,
       chest_3: 2,
-      trap_2: 1,
-      trap_3: 1,
+      chest_4: 0,
+      chest_5: 0,
+      trap_2: 3,
+      trap_3: 2,
+      trap_4: 0,
     };
     c.edges = ['north', 'south', 'west'];
     expect(validateConfig(c).ok).toBe(true);

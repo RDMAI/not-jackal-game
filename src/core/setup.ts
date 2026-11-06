@@ -24,6 +24,8 @@ export function buildTestDeck(): CardType[] {
 
 /** Default per-type counts matching the 5x5 test deck. */
 export function defaultDeckCounts(fieldX: number, fieldY: number): Record<CardType, number> {
+  console.log(fieldX);
+  console.log(fieldY);
   return {
     empty: 47,
     arrow_0_4: 5,
