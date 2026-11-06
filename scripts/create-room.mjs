@@ -45,7 +45,49 @@ function isValidRoomId(id) {
   return trimmed.length > 0 && !INVALID_ROOM_ID_CHARS.test(trimmed);
 }
 
-function defaultDeckCounts() {
+function defaultDeckCounts(fieldX, fieldY) {
+  //configs for default field (10x10)
+  count_default = 10 * 10;
+  cards_default = [
+    { name: "empty", count: 18 },
+    {  name: "chest_1", count: 5},
+    {  name: "chest_2", count: 5},
+    {  name: "chest_3", count: 3},
+    {  name: "chest_4", count: 2},
+    {  name: "chest_5", count: 1},
+    // {  name: "barrel", count: 4},
+    // {  name: "hole_trap", count: 3},
+    // {  name: "crocodile", count: 4},
+    // {  name: "arrow_0", count: 3},
+    // {  name: "arrow_1", count: 3},
+    // {  name: "arrow_0_2_4_6", count: 3},
+    {  name: "arrow_1_3_5_7", count: 3},
+    {  name: "arrow_0_4", count: 3},
+    {  name: "arrow_1_5", count: 3},
+    // {  name: "arrow_0_3_5", count: 3},
+    // {  name: "ice", count: 6},
+    // {  name: "fort", count: 2},
+    // {  name: "fort_resurrection", count: 1},
+    // {  name: "baloon", count: 2 },
+    // {  name: "maneater", count: 1},
+    // {  name: "cannon", count: 2},
+    // {  name: "plane", count: 1},
+    // {  name: "horses", count: 2},
+    {  name: "trap_2", count: 5},
+    {  name: "trap_3", count: 4},
+    // {  name: "trap_4", count: 2},
+    // {  name: "trap_5", count: 1},
+  ];
+  total_count = 0;
+  for (let index = 0; index < cards_default.length; index++) {
+    total_count += cards_default[index].count;
+  }
+
+  // for (let index = 0; index < cards_default.length; index++) {
+  //   const card = cards_default[index];
+    
+  // }
+  
   return {
     empty: 47,
     arrow_0_4: 5,

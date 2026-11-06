@@ -23,15 +23,20 @@ export function buildTestDeck(): CardType[] {
 }
 
 /** Default per-type counts matching the 5x5 test deck. */
-export function defaultDeckCounts(): Record<CardType, number> {
+export function defaultDeckCounts(fieldX: number, fieldY: number): Record<CardType, number> {
   return {
-    empty: 11,
-    arrow_0_4: 2,
-    arrow_1_5: 2,
-    arrow_1_3_5_7: 1,
-    chest_3: 4,
+    empty: 47,
+    arrow_0_4: 5,
+    arrow_1_5: 5,
+    arrow_1_3_5_7: 3,
+    chest_1: 5,
+    chest_2: 4,
+    chest_3: 3,
+    chest_4: 2,
+    chest_5: 1,
     trap_2: 3,
     trap_3: 2,
+    trap_4: 1,
   };
 }
 
@@ -49,7 +54,7 @@ export function defaultGameConfig(): GameConfig {
   return {
     fieldSizeX: FIELD_SIZE,
     fieldSizeY: FIELD_SIZE,
-    deckCounts: defaultDeckCounts(),
+    deckCounts: defaultDeckCounts(FIELD_SIZE, FIELD_SIZE),
     edges: ['north', 'south'],
   };
 }
